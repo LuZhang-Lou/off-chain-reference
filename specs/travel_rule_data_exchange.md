@@ -288,6 +288,7 @@ Represents a national ID.
 Valid values are:
 * `none` - No status is yet set from this actor.
 * `needs_kyc_data` - KYC data about the subaddresses is required by this actor.
+* `ready_for_settlement` - Transaction is ready for settlement according to this actor (i.e. the required signatures/KYC data have been provided)
 * `abort` - Indicates the actor wishes to abort this payment, instead of settling it.
 * `soft_match` - Actor's KYC data resulted in a soft-match.  The VASP associated with this actor should send any available KYC information which may clear the soft-match via the KYCObject field of `additional_kyc_data`.  If not sent within SLA window, this transaction will be aborted.
 

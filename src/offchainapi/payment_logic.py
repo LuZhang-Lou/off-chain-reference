@@ -518,8 +518,6 @@ class PaymentProcessor(CommandProcessor):
         try:
             new_state = State.from_payment_object(new_payment)
             if not self.can_change_status(payment, new_payment):
-                # other_status_new = new_payment.data[other_role].status.as_status()
-                # other_status = payment.data[other_role].status.as_status()
                 old_state = State.from_payment_object(payment)
                 raise PaymentLogicError(
                     OffChainErrorCode.payment_wrong_status,
@@ -608,7 +606,8 @@ class PaymentProcessor(CommandProcessor):
             no new command will be emiited.
         '''
         business = self.business
-        # FIXME, do we make sure the payment pbject is valid or try/catch here?
+        # payment is checked already, normally we don't need to worry about
+        # InvalidStateException here
         current_state = State.from_payment_object(payment)
 
         is_receiver = business.is_recipient(payment, ctx)
@@ -667,12 +666,6 @@ class PaymentProcessor(CommandProcessor):
                     assert is_sender, "Actor must be sender to act on RSOFT"
                 # TODO: first examine whether we've already provided additional kyc data
                 # this is some protection logic that is not specified in DIP-1
-                # attached_data = new_payment.data[role].get_additional_kyc_data()
-                # if attached_data:
-                #     new_payment.data[role].change_status(
-                #         StatusObject(Status.abort, "rejected", "already provided additional kyc data")
-                #     )
-                # else:
                 additional_kyc = await business.get_additional_kyc(new_payment, ctx)
                 new_payment.data[role].add_additional_kyc_data(additional_kyc)
 
@@ -698,18 +691,14 @@ class PaymentProcessor(CommandProcessor):
                     )
 
         # FIXME push down this layer of handlign to various business functions
-        # except BusinessForceAbort as e:
-
-        #     # We cannot abort once we said we are ready_for_settlement
-        #     # or beyond. However we will catch a wrong change in the
-        #     # check when we change status.
-        #     new_payment = payment.new_version(new_payment.version, store=self.object_store)
-        #     current_status = Status.abort
-
-        #     abort_code = e.code # already a string
-        #     abort_msg = e.message
-
+        # FIXME when do we do this here?
+        except BusinessForceAbort as e:
+            new_payment = payment.new_version(new_payment.version, store=self.object_store)
+            new_payment.data[role].change_status(
+                StatusObject(Status.abort, "rejected", str(e))
+            )
         # FIXME not sure we need this , but keep it for now
+        # if unseen exception happens, log it and scream
         except Exception as e:
             # This is an unexpected error, so we need to track it.
             error_ref = get_unique_string()
@@ -718,15 +707,7 @@ class PaymentProcessor(CommandProcessor):
                 f'[{error_ref}] Error while processing payment {payment.reference_id}'
                 ' return error in metadata & abort.')
             logger.exception(e)
-
-            # Only report the error in meta-data
-            # & Abort the payment.
-            new_payment = payment.new_version(new_payment.version, store=self.object_store)
-            current_status = Status.abort
-
-            # TODO: use proper codes and messages on abort.
-            abort_code = OffChainErrorCode.payment_vasp_error.value
-            abort_msg = f'An unexpected excption was raised by the VASP business logic. Ref: {error_ref}'
+            raise e
 
         # Do an internal consistency check:
         try:
