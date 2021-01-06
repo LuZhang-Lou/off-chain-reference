@@ -30,7 +30,6 @@ class KYCData(StructureChecker):
         ("place_of_birth", dict, OPTIONAL, WRITE_ONCE),
         ("national_id", dict, OPTIONAL, WRITE_ONCE),
         ("legal_entity_name", str, OPTIONAL, WRITE_ONCE),
-        # ("other", dict, OPTIONAL, WRITE_ONCE),
     ]
 
     def __init__(self, kyc_dict):

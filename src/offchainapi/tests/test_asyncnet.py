@@ -33,14 +33,7 @@
 
 # @pytest.fixture
 # def url(net_handler, tester_addr):
-#     # tester to testee
 #     return net_handler.get_url('/', tester_addr.as_str())
-
-# @pytest.fixture
-# def testee_to_tester_url(net_handler, testee_addr):
-#     # testee to tester
-#     return net_handler.get_url('/', testee_addr.as_str())
-
 
 
 # @pytest.fixture
@@ -149,21 +142,21 @@
 
 # def test_get_url(net_handler, tester_addr, testee_addr):
 #     base_url = "http://offchain.test.com/offchain"
-#     expected = f"{base_url}/v1/{testee_addr.as_str()}/{tester_addr.as_str()}/command"
+#     expected = f"{base_url}/v1/{tester_addr.as_str()}/{testee_addr.as_str()}/command"
 #     url = net_handler.get_url(base_url, tester_addr.as_str(), other_is_server=True)
 #     assert url == expected
 
 #     base_url = "http://offchain.test.com/offchain/"
-#     expected = f"{base_url}v1/{testee_addr.as_str()}/{tester_addr.as_str()}/command"
+#     expected = f"{base_url}v1/{tester_addr.as_str()}/{testee_addr.as_str()}/command"
 #     url = net_handler.get_url(base_url, tester_addr.as_str(), other_is_server=True)
 #     assert url == expected
 
 #     base_url = "http://offchain.test.com"
-#     expected = f"{base_url}/v1/{testee_addr.as_str()}/{tester_addr.as_str()}/command"
+#     expected = f"{base_url}/v1/{tester_addr.as_str()}/{testee_addr.as_str()}/command"
 #     url = net_handler.get_url(base_url, tester_addr.as_str(), other_is_server=True)
 #     assert url == expected
 
 #     base_url = "http://offchain.test.com/"
-#     expected = f"{base_url}v1/{testee_addr.as_str()}/{tester_addr.as_str()}/command"
+#     expected = f"{base_url}v1/{tester_addr.as_str()}/{testee_addr.as_str()}/command"
 #     url = net_handler.get_url(base_url, tester_addr.as_str(), other_is_server=True)
 #     assert url == expected

@@ -90,11 +90,3 @@ class TestBusinessContext(BusinessContext):
                     "surname": "Smith",
                     "dob": "1973-07-08"
                 })
-
-    # # ----- Settlement -----
-
-    # async def ready_for_settlement(self, payment, ctx=None):
-    #     if not self.reliable:
-    #         self.cause_error()
-
-    #     return ctx['settle']

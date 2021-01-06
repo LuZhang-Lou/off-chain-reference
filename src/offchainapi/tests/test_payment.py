@@ -167,11 +167,6 @@ def test_payment_object_creation(sender_actor, receiver_actor, payment_action):
         sender_actor, receiver_actor, 'ref', 'orig_ref', 'desc', payment_action
     )
 
-def test_payment_object_creation(sender_actor, receiver_actor, payment_action):
-    payment = PaymentObject(
-        sender_actor, receiver_actor, 'ref', 'orig_ref', 'desc', payment_action
-    )
-
 
 def test_payment_object_update(payment):
     payment.add_recipient_signature('SIG')
