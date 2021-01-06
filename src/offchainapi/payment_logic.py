@@ -7,15 +7,17 @@ from .errors import OffChainErrorCode
 from .command_processor import CommandProcessor
 from .payment import Status, PaymentObject, StatusObject
 from .payment_command import PaymentCommand, PaymentLogicError
+from .status_logic import State, KYCResult, InvalidStateException
 from .asyncnet import NetworkException
 from .shared_object import SharedObject
-from .status_logic import STATUS_HEIGHTS
 from .libra_address import LibraAddress, LibraAddressError
 from .utils import get_unique_string
 
 import asyncio
 import logging
 import json
+
+
 
 
 class PaymentProcessorNoProgress(Exception):
@@ -25,6 +27,33 @@ class PaymentProcessorNoProgress(Exception):
 class PaymentProcessorRemoteError(Exception):
     pass
 
+
+class PaymentStateMachine:
+
+    TERMINAL_STATES = {State.RABORT, State.SABORT, State.READY}
+
+    STATE_MACHINE = {
+        State.SINIT: {State.RSEND, State.RSOFT, State.RABORT},
+        State.RSEND: {State.READY, State.SABORT, State.SSOFT},
+        State.RSOFT: {State.SSOFTSEND},
+        State.SSOFT: {State.RSOFTSEND},
+        State.SSOFTSEND: {State.RABORT, State.RSEND},
+        State.RSOFTSEND: {State.SABORT, State.READY},
+    }
+
+    @staticmethod
+    def is_terminal_state(state: State) -> bool:
+        return state in PaymentStateMachine.TERMINAL_STATES
+
+    @staticmethod
+    def can_transition(old_state: State, new_state: State) -> bool:
+        if PaymentStateMachine.is_terminal_state(old_state):
+          return False  # terminal states can't change
+        if old_state not in PaymentStateMachine.STATE_MACHINE:
+          return False  # invalid state
+        if new_state not in PaymentStateMachine.STATE_MACHINE[old_state]:
+          return False  # invalid new state
+        return True
 
 logger = logging.getLogger(name='libra_off_chain_api.payment_logic')
 
@@ -318,7 +347,7 @@ class PaymentProcessor(CommandProcessor):
                         f'{new_payment.reference_id}'
                     )
 
-                self.check_new_payment(new_payment)
+                self.check_initial_payment(new_payment)
             else:
 
                 # Ensure the payment ref_id stays the same
@@ -413,27 +442,21 @@ class PaymentProcessor(CommandProcessor):
 
     # ----------- END of CommandProcessor interface ---------
 
+    # FIXME collapse functions
     def check_signatures(self, payment):
         ''' Utility function that checks all signatures present for validity.
 
         Throws a BusinessValidationFailure exception if the recipient signature is present but incorrect.
         '''
-        business = self.business
-        is_sender = business.is_sender(payment)
-        other_actor = payment.receiver if is_sender else payment.sender
+        self.business.validate_recipient_signature(payment)
 
-        if is_sender and 'recipient_signature' in payment:
-            business.validate_recipient_signature(payment)
+    def check_initial_payment(self, payment: PaymentObject):
+        ''' Checks the initial PaymentObject for a payment.
+            Raises PaymentLogicError when check fials
 
-    def check_new_payment(self, new_payment):
-        ''' Checks a diff for a new payment from the other VASP, and returns
-            a valid payemnt. If a validation error occurs, then an exception
-            is thrown.
-
-            NOTE: the VASP may be the RECEIVER of the new payment, for example
-            for person to person payment initiated by the sender. The VASP
-            may also be the SENDER for the payment, such as in cases where a
-            merchant is charging an account, a refund, or a standing order.`
+            NOTE: this function assumes that the VASP is the RECEIVER of the
+            new payment, for example for person to person payment initiated
+            by the sender.
 
             The only real check is that that status for the VASP that has
             not created the payment must be none, to allow for checks and
@@ -441,40 +464,41 @@ class PaymentProcessor(CommandProcessor):
             be included by the other party, and should be checked.
         '''
         business = self.business
-        is_receipient = business.is_recipient(new_payment)
+        is_recipient = business.is_recipient(payment)
+        assert is_recipient, "Actor must be recipient of this payment"
 
-        role = ['sender', 'receiver'][is_receipient]
+        try:
+            state = State.from_payment_object(payment)
+            if state != State.SINIT:
+                raise PaymentLogicError(
+                    OffChainErrorCode.payment_wrong_status,
+                    f'Initial payment object is not in SINIT state, but {state}'
+                )
 
-        if not self.good_initial_status(new_payment, is_receipient):
+        except InvalidStateException as e:
             raise PaymentLogicError(
-                        OffChainErrorCode.payment_wrong_status,
-                        f'Sender set receiver status or vice-versa.')
+                OffChainErrorCode.payment_wrong_status,
+                f'Invalid state in payment: {e}')
 
         # Check that the subaddresses are present
         # TODO: catch exceptions into Payment errors
 
         try:
-            send_addr = LibraAddress.from_encoded_str(new_payment.sender.address)
-            receiver_addr = LibraAddress.from_encoded_str(new_payment.receiver.address)
+            send_addr = LibraAddress.from_encoded_str(payment.sender.address)
+            receiver_addr = LibraAddress.from_encoded_str(payment.receiver.address)
         except LibraAddressError as e:
             raise PaymentLogicError(
                 OffChainErrorCode.payment_invalid_libra_address,
                 str(e)
             )
 
-        try:
-            self.check_signatures(new_payment)
-        except BusinessValidationFailure:
-            raise PaymentLogicError(
-                OffChainErrorCode.payment_wrong_recipient_signature,
-                'Recipient signature check failed.'
-            )
 
-    def check_new_update(self, payment, new_payment):
-        ''' Checks a diff updating an existing payment.
-
-            On success returns the new payment object. All check are fast to
-            ensure a timely response (cannot support async operations).
+    def check_new_update(self, payment, new_payment) -> None:
+        ''' check the updates to a payment are valid. Three things to check:
+            1. the other side did not touch myself's PaymentActor object
+            2. state machine transition is valid
+            3. when recipient_signature is populated, sender validates the signature
+            Raises PaymentLogicError upon errors
         '''
         business = self.business
         is_receiver = business.is_recipient(new_payment)
@@ -491,21 +515,33 @@ class PaymentProcessor(CommandProcessor):
                 f'Cannot change {role} information.')
 
         # Check the status transition is valid.
-
-        other_status_new = new_payment.data[other_role].status.as_status()
-        if not self.can_change_status(payment, other_status_new, is_receiver):
-            other_status = payment.data[other_role].status.as_status()
+        try:
+            new_state = State.from_payment_object(new_payment)
+            if not self.can_change_status(payment, new_payment):
+                # other_status_new = new_payment.data[other_role].status.as_status()
+                # other_status = payment.data[other_role].status.as_status()
+                old_state = State.from_payment_object(payment)
+                raise PaymentLogicError(
+                    OffChainErrorCode.payment_wrong_status,
+                    f'Invalid state transition: {old_state} -> {new_state}')
+        except InvalidStateException as e:
             raise PaymentLogicError(
                 OffChainErrorCode.payment_wrong_status,
-                f'Invalid Status transition: {other_status} -> {other_status_new}')
+                f'Invalid state in payment: {e}')
 
-        try:
-            self.check_signatures(new_payment)
-        except BusinessValidationFailure:
-            raise PaymentLogicError(
-                OffChainErrorCode.payment_wrong_recipient_signature,
-                'Recipient signature check failed.'
-            )
+        if new_state == State.RSEND:
+            if not 'recipient_signature' in new_payment:
+                raise PaymentLogicError(
+                    OffChainErrorCode.payment_wrong_recipient_signature,
+                    'Recipient signature is not included in the payment.'
+                )
+            try:
+                self.check_signatures(new_payment)
+            except BusinessValidationFailure:
+                raise PaymentLogicError(
+                    OffChainErrorCode.payment_wrong_recipient_signature,
+                    'Recipient signature check failed.'
+                )
 
     def payment_process(self, payment):
         ''' A syncronous version of payment processing -- largely
@@ -515,56 +551,42 @@ class PaymentProcessor(CommandProcessor):
             loop = asyncio.new_event_loop()
         return loop.run_until_complete(self.payment_process_async(payment))
 
-    def can_change_status(self, payment, new_self, actor_is_sender):
+    def can_change_status(self, old_payment: PaymentObject, new_payment: PaymentObject) -> bool:
         """ Checks whether an actor can change the status in its PaymentActor
             to a new status accoding to our logic for valid state
             transitions.
 
         Parameters:
-            * payment (PaymentObject): the initial payment we are updating.
-            * new_status (Status): the new status we want to transition to.
-            * actor_is_sender (bool): whether the actor doing the transition
-                is a sender (set False for receiver).
+            * old_payment (PaymentObject): the old payment object.
+            * new_payment (PaymentObject): the new payment object.
 
         Returns:
             * bool: True for valid transition and False otherwise.
         """
-        if actor_is_sender:
-            old_self = payment.sender.status.as_status()
-            other = payment.receiver.status.as_status()
-        else:
-            old_self = payment.receiver.status.as_status()
-            other = payment.sender.status.as_status()
+        old_sender_status = old_payment.sender.status.as_status()
+        old_sender_additional_kyc = old_payment.sender.get_additional_kyc_data()
+        old_receiver_status = old_payment.receiver.status.as_status()
+        old_receiver_additional_kyc = old_payment.receiver.get_additional_kyc_data()
 
-        valid = True
+        new_sender_status = new_payment.sender.status.as_status()
+        new_sender_additional_kyc = new_payment.sender.get_additional_kyc_data()
+        new_receiver_status = new_payment.receiver.status.as_status()
+        new_receiver_additional_kyc = new_payment.receiver.get_additional_kyc_data()
 
-        # if other side aborts, self shall abort
-        if other == Status.abort:
-            valid &= new_self == Status.abort
+        old_state = State.from_status(
+            old_sender_status,
+            old_receiver_status,
+            old_sender_additional_kyc,
+            old_receiver_additional_kyc,
+        )
 
-        # If self has aborted, self shall not change status
-        if old_self == Status.abort:
-            valid &= old_self == new_self
-
-        # If both are ready_for_settlement, self shall not change status
-        if (
-            old_self == Status.ready_for_settlement
-            and other == Status.ready_for_settlement
-        ):
-            valid &= old_self == new_self
-
-        # If self is ready_for_settlement, it shall only
-        # transit to other status when the other side aborts
-        # and it shall only transit to abort
-        if (
-            old_self == Status.ready_for_settlement
-            and other != Status.abort
-        ):
-            valid &= old_self == new_self
-
-        # Respect ordering of status
-        valid &= STATUS_HEIGHTS[new_self] >= STATUS_HEIGHTS[old_self]
-        return valid
+        new_state = State.from_status(
+            new_sender_status,
+            new_receiver_status,
+            new_sender_additional_kyc,
+            new_receiver_additional_kyc,
+        )
+        return PaymentStateMachine.can_transition(old_state, new_state)
 
     def good_initial_status(self, payment, actor_is_sender):
         """ Checks whether a payment has a valid initial status, given
@@ -586,6 +608,8 @@ class PaymentProcessor(CommandProcessor):
             no new command will be emiited.
         '''
         business = self.business
+        # FIXME, do we make sure the payment pbject is valid or try/catch here?
+        current_state = State.from_payment_object(payment)
 
         is_receiver = business.is_recipient(payment, ctx)
         is_sender = not is_receiver
@@ -604,77 +628,88 @@ class PaymentProcessor(CommandProcessor):
         try:
             await business.payment_initial_processing(payment, ctx)
 
-            if status == Status.abort or (
-                status == Status.ready_for_settlement and
-                other_status == Status.ready_for_settlement
-            ):
+            if PaymentStateMachine.is_terminal_state(current_state):
                 # Nothing more to be done with this payment
                 # Return a new payment version with no modification
                 # To singnal no changes, and therefore no new command.
                 return new_payment
 
-            # We set our status as abort.
-            if other_status == Status.abort:
-                current_status = Status.abort
-
-                abort_code = 'FOLLOW'
-                abort_msg = 'Follows the abort from the other side.'
-
-            if current_status == Status.none:
+            if current_state == State.SINIT:
                 await business.check_account_existence(new_payment, ctx)
 
-            # Request more KYC Data or progress the protocol
-            if current_status in {Status.none,
-                                  Status.needs_kyc_data,
-                                  Status.needs_recipient_signature,
-                                  Status.soft_match}:
+            # if SINIT or SSOFTSEND, receiver should provide kyc/signature
+            if current_state == State.SINIT or current_state == State.SSOFTSEND:
+                assert is_receiver, "Actor must be receiver to act on SINIT or SSOFTSEND"
+                kyc_result = await business.evaluate_kyc(new_payment, ctx)
+                if kyc_result == KYCResult.PASS:
+                    # if pass, provide kyc and signature
+                    extended_kyc = await business.get_extended_kyc(new_payment, ctx)
+                    new_payment.data[role].add_kyc_data(extended_kyc)
+                    signature = await business.get_recipient_signature(
+                        new_payment, ctx)
+                    new_payment.add_recipient_signature(signature)
+                    new_payment.data[role].change_status(StatusObject(Status.ready_for_settlement))
 
-                # Request KYC -- this may be async in case
-                # of need for user input
-                next_kyc = await business.next_kyc_level_to_request(
-                    new_payment, ctx)
-                if next_kyc != Status.none:
-                    current_status = next_kyc
 
-            # Provide KYC -- this may be async in case
-            # of need for user input
-            kyc_to_provide = await business.next_kyc_to_provide(
-                new_payment, ctx)
+                elif kyc_result == KYCResult.SOFT_MATCH and current_state == State.SINIT:
+                    new_payment.data[role].change_status(StatusObject(Status.soft_match))
 
-            myself_new_actor = new_payment.data[role]
+                # If fail or second time soft-match
+                elif kyc_result == KYCResult.FAIL or kyc_result == KYCResult.SOFT_MATCH:
+                    new_payment.data[role].change_status(
+                        StatusObject(Status.abort, "rejected", "KYC fails")
+                    )
 
-            if Status.needs_kyc_data in kyc_to_provide:
-                extended_kyc = await business.get_extended_kyc(new_payment, ctx)
-                myself_new_actor.add_kyc_data(extended_kyc)
-
-            if Status.soft_match in kyc_to_provide:
+            if current_state == State.SSOFT or current_state == State.RSOFT:
+                if current_state == State.SSOFT:
+                    assert is_receiver, "Actor must be receiver to act on SSOFT"
+                else:
+                    assert is_sender, "Actor must be sender to act on RSOFT"
+                # TODO: first examine whether we've already provided additional kyc data
+                # this is some protection logic that is not specified in DIP-1
+                # attached_data = new_payment.data[role].get_additional_kyc_data()
+                # if attached_data:
+                #     new_payment.data[role].change_status(
+                #         StatusObject(Status.abort, "rejected", "already provided additional kyc data")
+                #     )
+                # else:
                 additional_kyc = await business.get_additional_kyc(new_payment, ctx)
-                myself_new_actor.add_additional_kyc_data(additional_kyc)
+                new_payment.data[role].add_additional_kyc_data(additional_kyc)
 
-            if Status.needs_recipient_signature in kyc_to_provide:
-                signature = await business.get_recipient_signature(
-                    new_payment, ctx)
-                new_payment.add_recipient_signature(signature)
+            if current_state == State.RSOFTSEND or current_state == State.RSEND:
+                assert is_sender, "Actor must be sender to act on RSOFTSEND or RSEND"
+                kyc_result = await business.evaluate_kyc(new_payment, ctx)
+                if kyc_result == KYCResult.PASS:
+                    # if pass, move to ready
+                    if new_payment.get_recipient_signature() == None:
+                        new_payment.data[role].change_status(
+                            StatusObject(Status.abort, "rejected", "recipient signature not presented")
+                        )
+                    else:
+                        new_payment.data[role].change_status(StatusObject(Status.ready_for_settlement))
 
-            # Check if we have all the KYC we need
-            if current_status not in {
-                    Status.ready_for_settlement,
-                    Status.abort}:
-                ready = await business.ready_for_settlement(new_payment, ctx)
-                if ready:
-                    current_status = Status.ready_for_settlement
+                if kyc_result == KYCResult.SOFT_MATCH and current_state == State.RSEND:
+                    new_payment.data[role].change_status(StatusObject(Status.soft_match))
 
-        except BusinessForceAbort as e:
+                # If fail or second time soft-match
+                if kyc_result == KYCResult.FAIL or kyc_result == KYCResult.SOFT_MATCH:
+                    new_payment.data[role].change_status(
+                        StatusObject(Status.abort, "rejected", "KYC fails")
+                    )
 
-            # We cannot abort once we said we are ready_for_settlement
-            # or beyond. However we will catch a wrong change in the
-            # check when we change status.
-            new_payment = payment.new_version(new_payment.version, store=self.object_store)
-            current_status = Status.abort
+        # FIXME push down this layer of handlign to various business functions
+        # except BusinessForceAbort as e:
 
-            abort_code = e.code # already a string
-            abort_msg = e.message
+        #     # We cannot abort once we said we are ready_for_settlement
+        #     # or beyond. However we will catch a wrong change in the
+        #     # check when we change status.
+        #     new_payment = payment.new_version(new_payment.version, store=self.object_store)
+        #     current_status = Status.abort
 
+        #     abort_code = e.code # already a string
+        #     abort_msg = e.message
+
+        # FIXME not sure we need this , but keep it for now
         except Exception as e:
             # This is an unexpected error, so we need to track it.
             error_ref = get_unique_string()
@@ -694,16 +729,20 @@ class PaymentProcessor(CommandProcessor):
             abort_msg = f'An unexpected excption was raised by the VASP business logic. Ref: {error_ref}'
 
         # Do an internal consistency check:
-        if not self.can_change_status(payment, current_status, is_sender):
-            sender_status = payment.sender.status.as_status()
-            receiver_status = payment.receiver.status.as_status()
-            raise RuntimeError(
-                f'Invalid status transition while processing '
-                f'payment {payment.get_version()}: '
-                f'(({sender_status}, {receiver_status})) -> {current_status} '
-                f'SENDER={is_sender}'
-            )
+        try:
+            if not self.can_change_status(payment, new_payment):
+                sender_status = payment.sender.status.as_status()
+                receiver_status = payment.receiver.status.as_status()
+                new_state = State.from_payment_object(new_payment)
+                raise RuntimeError(
+                    f'Invalid status transition while processing '
+                    f'payment {payment.get_version()}: '
+                    f'{current_state} -> {new_state} SENDER={is_sender}'
+                )
+        except InvalidStateException as e:
+            raise PaymentLogicError(
+                OffChainErrorCode.payment_wrong_status,
+                f'Invalid state in payment: {e}')
 
-        new_payment.data[role].change_status(
-            StatusObject(current_status, abort_code, abort_msg))
+
         return new_payment

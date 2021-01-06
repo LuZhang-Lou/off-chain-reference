@@ -288,10 +288,7 @@ Represents a national ID.
 Valid values are:
 * `none` - No status is yet set from this actor.
 * `needs_kyc_data` - KYC data about the subaddresses is required by this actor.
-* `needs_recipient_signature` - Can only be associated with the sender actor.  Means that the sender still requires that the recipient VASP provide the signature so that the transaction can be put on-chain.
-* `ready_for_settlement` - Transaction is ready for settlement according to this actor (i.e. the required signatures/KYC data have been provided)
 * `abort` - Indicates the actor wishes to abort this payment, instead of settling it.
-* `pending_review` - Payment is pending review.
 * `soft_match` - Actor's KYC data resulted in a soft-match.  The VASP associated with this actor should send any available KYC information which may clear the soft-match via the KYCObject field of `additional_kyc_data`.  If not sent within SLA window, this transaction will be aborted.
 
 **Valid Status Transitions**. Each side of the transaction is only allowed to mutate their own status (sender or receiver), and upon payment creation may only set the status of the other party to `none`. Subsequently, each party may only modify their own state to a higher or equal state in the order `none`, (`needs_kyc_data`, `needs_recipient_signature`, `abort`, `pending_review`), (`soft_match`, `ready_for_settlement`, `abort`). Once a party sets their own status to `abort` they must not modify the payment any more by issuing new commands (but can accept commands from the other party). A party may only modify a state of `ready_for_settlement` to `abort` if the other side sets their status to `abort`.

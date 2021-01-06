@@ -8,17 +8,24 @@ from ..libra_address import LibraAddress
 from ..protocol_messages import CommandRequestObject, OffChainProtocolError, \
     OffChainException
 from ..payment_logic import PaymentCommand, PaymentProcessor
-from ..status_logic import Status
+from ..status_logic import Status, KYCResult
 from ..storage import StorableFactory
 from ..crypto import ComplianceKey
 from ..errors import OffChainErrorCode
 from .sample_db import SampleDB
-
+from ..payment import KYCData
 import json
 
 business_config = """[
     {
         "account": "xxxxxxxx",
+        "balance": 10.0,
+        "entity": false,
+        "kyc_data" : "{ 'name' : 'Alice' }",
+        "pending_transactions" : {}
+    },
+    {
+        "account": "bbbbbbbb",
         "balance": 10.0,
         "entity": false,
         "kyc_data" : "{ 'name' : 'Alice' }",
@@ -130,49 +137,14 @@ class sample_business(BusinessContext):
         other_role = ['sender', 'receiver'][self.is_sender(payment)]
         return other_role
 
-    async def next_kyc_to_provide(self, payment, ctx=None):
-        my_role = self.get_my_role(payment)
-        other_role = self.get_other_role(payment)
+    async def evaluate_kyc(self, payment, ctx=None) -> KYCResult:
+        if "kyc_data" in payment.sender.data and "given_name" in payment.sender.kyc_data.data:
+            if payment.sender.kyc_data.given_name == "kyc_to_fail":
+                return KYCResult.FAIL
+            if payment.sender.kyc_data.given_name == "kyc_to_softmatch":
+                return KYCResult.SOFT_MATCH
+        return KYCResult.PASS
 
-        subaddress = payment.data[my_role].address
-
-        sub = LibraAddress.from_encoded_str(subaddress).subaddress_bytes.decode('ascii')
-        account = self.get_account(sub)
-
-        if account['entity']:
-            return { Status.needs_kyc_data }
-
-        to_provide = set()
-
-        if payment.data[other_role].status.as_status() == Status.needs_kyc_data:
-                to_provide.add(Status.needs_kyc_data)
-
-        if payment.data[other_role].status.as_status() == Status.needs_recipient_signature:
-                if my_role == 'receiver':
-                    to_provide.add(Status.needs_recipient_signature)
-
-        return to_provide
-
-
-    async def next_kyc_level_to_request(self, payment, ctx=None):
-        my_role = self.get_my_role(payment)
-        other_role = self.get_other_role(payment)
-        subaddress = payment.data[my_role].address
-
-        sub = LibraAddress.from_encoded_str(subaddress).subaddress_bytes.decode('ascii')
-        account = self.get_account(sub)
-
-        if account['entity']:
-            # Put the money aside for this payment ...
-            return Status.none
-
-        if 'kyc_data' not in payment.data[other_role].data:
-            return Status.needs_kyc_data
-
-        if 'recipient_signature' not in payment.data and my_role == 'sender':
-            return Status.needs_recipient_signature
-
-        return payment.data[my_role].status.as_status()
 
     async def get_extended_kyc(self, payment, ctx=None):
         ''' Gets the extended KYC information for this payment.
@@ -180,56 +152,11 @@ class sample_business(BusinessContext):
             Can raise:
                    BusinessNotAuthorized.
         '''
-        my_role = self.get_my_role(payment)
-        subaddress = payment.data[my_role].address
-
-        sub = LibraAddress.from_encoded_str(subaddress).subaddress_bytes.decode('ascii')
-        account = self.get_account(sub)
-        return account["kyc_data"]
-
-    async def ready_for_settlement(self, payment, ctx=None):
-        my_role = self.get_my_role(payment)
-        other_role = self.get_other_role(payment)
-        subaddress = payment.data[my_role].address
-
-        sub = LibraAddress.from_encoded_str(subaddress).subaddress_bytes.decode('ascii')
-        account = self.get_account(sub)
-
-        if my_role == 'sender':
-            reference = payment.reference_id
-            if account["balance"] >= payment.action.amount:
-
-                # Reserve the amount for this payment
-                if reference not in account['pending_transactions']:
-                    account['pending_transactions'][reference] = {
-                        "amount": payment.action.amount
-                    }
-                    account["balance"] -= payment.action.amount
-
-            else:
-                if reference not in account['pending_transactions']:
-                    raise BusinessForceAbort(OffChainErrorCode.payment_insufficient_funds, 'Insufficient Balance')
-
-        # This VASP always settles payments on chain, so we always need
-        # a signature to settle on chain.
-        if not self.has_sig(payment):
-            return False
-
-        # This VASP subaccount is a business
-        if account['entity']:
-            return True
-
-        # The other VASP subaccount is a business
-        if 'kyc_data' in payment.data[other_role].data and \
-            payment.data[other_role].data['kyc_data'].parse()['type'] == 'entity':
-            return True
-
-        # Simple VASP, always requires kyc data for individuals
-        if 'kyc_data' in payment.data[other_role].data and 'kyc_data' in payment.data[my_role].data:
-            return True
-
-        # We are not ready to settle yet!
-        return False
+        return KYCData({
+            "payload_type": "KYC_DATA",
+            "payload_version": 1,
+            "type": "individual",
+        })
 
 
 class sample_vasp:

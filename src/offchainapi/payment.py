@@ -7,6 +7,7 @@ from .utils import StructureException, StructureChecker, \
 from .shared_object import SharedObject
 from .status_logic import Status
 from .libra_address import LibraAddress
+import typing
 
 import json
 
@@ -29,7 +30,7 @@ class KYCData(StructureChecker):
         ("place_of_birth", dict, OPTIONAL, WRITE_ONCE),
         ("national_id", dict, OPTIONAL, WRITE_ONCE),
         ("legal_entity_name", str, OPTIONAL, WRITE_ONCE),
-        ("other", dict, OPTIONAL, WRITE_ONCE),
+        # ("other", dict, OPTIONAL, WRITE_ONCE),
     ]
 
     def __init__(self, kyc_dict):
@@ -113,7 +114,7 @@ class PaymentActor(StructureChecker):
     fields = [
         ('address', str, REQUIRED, WRITE_ONCE),
         ('kyc_data', KYCData, OPTIONAL, WRITE_ONCE),
-        ('additional_kyc_data', KYCData, OPTIONAL, WRITE_ONCE),
+        ('additional_kyc_data', str, OPTIONAL, WRITE_ONCE),
         ('status', StatusObject, REQUIRED, UPDATABLE),
         ('metadata', list, REQUIRED, UPDATABLE)
     ]
@@ -154,11 +155,11 @@ class PaymentActor(StructureChecker):
             'kyc_data': kyc_data,
         })
 
-    def add_additional_kyc_data(self, additional_kyc_data):
+    def add_additional_kyc_data(self, additional_kyc_data: str):
         """ Add extended KYC information and kyc signature.
 
         Args:
-            kyc_data (str): The KYC data object
+            additional_kyc_data (str): Freeform KYC data.
         """
         self.update({
             'additional_kyc_data': additional_kyc_data,
@@ -183,6 +184,11 @@ class PaymentActor(StructureChecker):
         self.update({
             'status': status
         })
+
+    def get_additional_kyc_data(self) -> typing.Optional[str]:
+        if "additional_kyc_data" in self.data:
+            return self.additional_kyc_data
+        return None
 
 
 class PaymentAction(StructureChecker):
@@ -266,7 +272,6 @@ class PaymentObject(SharedObject, StructureChecker, JSONSerializable):
 
         self.update(main_state)
 
-
     @classmethod
     def create_from_record(cls, diff):
         """ Create a apyment object from a diff.
@@ -317,3 +322,8 @@ class PaymentObject(SharedObject, StructureChecker, JSONSerializable):
 
     def __str__(self):
         return json.dumps(self.get_json_data_dict(JSONFlag.STORE), indent=4)
+
+    def get_recipient_signature(self) -> typing.Optional[str]:
+        if "recipient_signature" in self.data:
+            return self.recipient_signature
+        return None

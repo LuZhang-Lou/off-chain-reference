@@ -64,6 +64,15 @@ def kyc_data():
         "type": "individual",
     })
 
+@pytest.fixture
+def signature():
+    return "VALID"
+
+
+@pytest.fixture
+def additional_kyc_data():
+    return "additional_kyc_data"
+
 
 @pytest.fixture
 def store(db):
