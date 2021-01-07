@@ -79,6 +79,11 @@ class sample_business(BusinessContext):
                 return acc
         raise BusinessValidationFailure(f'Account {subaddress} does not exist')
 
+    async def sender_ready_to_settle(self, payment, ctx):
+        if "recipient_signature" not in payment.data:
+            return (False, "recipient signature is not present")
+        return (True, "")
+
     def assert_payment_for_vasp(self, payment):
         sender = payment.sender
         receiver = payment.receiver

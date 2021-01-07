@@ -179,15 +179,11 @@ class PaymentProcessor(CommandProcessor):
         logger.info(f'(other:{other_address_str}) Process Command #{seq}')
 
         try:
-            command_ctx = await self.business.payment_pre_processing(
-                other_address, seq, command, payment)
-
             # Only respond to commands by other side.
             if command.origin == other_address:
 
                 # Determine if we should inject a new command.
-                new_payment = await self.payment_process_async(
-                    payment, ctx=command_ctx)
+                new_payment = await self.payment_process_async(payment)
 
                 if new_payment.has_changed():
                     new_cmd = PaymentCommand(new_payment)
@@ -504,7 +500,6 @@ class PaymentProcessor(CommandProcessor):
         is_receiver = business.is_recipient(new_payment)
 
         role = ['sender', 'receiver'][is_receiver]
-        other_role = ['sender', 'receiver'][role == 'sender']
         myself_actor = payment.data[role]
         myself_actor_new = new_payment.data[role]
 
@@ -595,7 +590,7 @@ class PaymentProcessor(CommandProcessor):
             return payment.receiver.status.as_status() == Status.none
         return payment.sender.status.as_status() == Status.none
 
-    async def payment_process_async(self, payment, ctx=None):
+    async def payment_process_async(self, payment):
         ''' Processes a payment that was just updated, and returns a
             new payment with potential updates. This function may be
             called multiple times for the same payment to support
@@ -610,22 +605,17 @@ class PaymentProcessor(CommandProcessor):
         # InvalidStateException here
         current_state = State.from_payment_object(payment)
 
-        is_receiver = business.is_recipient(payment, ctx)
+        is_receiver = business.is_recipient(payment)
         is_sender = not is_receiver
         role = ['sender', 'receiver'][is_receiver]
-        other_role = ['sender', 'receiver'][not is_receiver]
-
-        status = payment.data[role].status.as_status()
-        current_status = status
-        other_status = payment.data[other_role].status.as_status()
 
         new_payment = payment.new_version(store=self.object_store)
 
-        abort_code = None
-        abort_msg = None
+        ctx = None
 
         try:
-            await business.payment_initial_processing(payment, ctx)
+            ctx = await business.generate_payment_context(payment)
+            await business.check_travel_rule_requirement(payment, ctx)
 
             if PaymentStateMachine.is_terminal_state(current_state):
                 # Nothing more to be done with this payment
@@ -640,6 +630,7 @@ class PaymentProcessor(CommandProcessor):
             if current_state == State.SINIT or current_state == State.SSOFTSEND:
                 assert is_receiver, "Actor must be receiver to act on SINIT or SSOFTSEND"
                 kyc_result = await business.evaluate_kyc(new_payment, ctx)
+
                 if kyc_result == KYCResult.PASS:
                     # if pass, provide kyc and signature
                     extended_kyc = await business.get_extended_kyc(new_payment, ctx)
@@ -648,7 +639,6 @@ class PaymentProcessor(CommandProcessor):
                         new_payment, ctx)
                     new_payment.add_recipient_signature(signature)
                     new_payment.data[role].change_status(StatusObject(Status.ready_for_settlement))
-
 
                 elif kyc_result == KYCResult.SOFT_MATCH and current_state == State.SINIT:
                     new_payment.data[role].change_status(StatusObject(Status.soft_match))
@@ -674,9 +664,10 @@ class PaymentProcessor(CommandProcessor):
                 kyc_result = await business.evaluate_kyc(new_payment, ctx)
                 if kyc_result == KYCResult.PASS:
                     # if pass, move to ready
-                    if new_payment.get_recipient_signature() == None:
+                    sender_ready_to_settle, abort_reason = await business.sender_ready_to_settle(new_payment, ctx)
+                    if not sender_ready_to_settle:
                         new_payment.data[role].change_status(
-                            StatusObject(Status.abort, "rejected", "recipient signature not presented")
+                            StatusObject(Status.abort, "rejected", abort_reason)
                         )
                     else:
                         new_payment.data[role].change_status(StatusObject(Status.ready_for_settlement))
@@ -690,8 +681,6 @@ class PaymentProcessor(CommandProcessor):
                         StatusObject(Status.abort, "rejected", "KYC fails")
                     )
 
-        # FIXME push down this layer of handlign to various business functions
-        # FIXME when do we do this here?
         except BusinessForceAbort as e:
             new_payment = payment.new_version(new_payment.version, store=self.object_store)
             new_payment.data[role].change_status(
@@ -702,18 +691,21 @@ class PaymentProcessor(CommandProcessor):
         except Exception as e:
             # This is an unexpected error, so we need to track it.
             error_ref = get_unique_string()
-
+            # update status to abort so that we can post process in the finally block
+            new_payment.data[role].change_status(
+                StatusObject(Status.abort, "rejected", str(e))
+            )
             logger.error(
                 f'[{error_ref}] Error while processing payment {payment.reference_id}'
                 ' return error in metadata & abort.')
             logger.exception(e)
             raise e
+        finally:
+            await business.payment_post_processing(new_payment, ctx)
 
         # Do an internal consistency check:
         try:
             if not self.can_change_status(payment, new_payment):
-                sender_status = payment.sender.status.as_status()
-                receiver_status = payment.receiver.status.as_status()
                 new_state = State.from_payment_object(new_payment)
                 raise RuntimeError(
                     f'Invalid status transition while processing '

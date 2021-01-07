@@ -324,19 +324,20 @@ def test_payment_process_RSEND_sender_ready(payment, processor, kyc_data, signat
     bcm = processor.business_context()
     bcm.is_recipient.side_effect = [False]
     bcm.evaluate_kyc.side_effect = [KYCResult.PASS]
+    bcm.sender_ready_to_settle.side_effect = [(True, "")]
 
     new_payment = processor.payment_process(payment)
     assert State.from_payment_object(new_payment), State.READY
 
-def test_payment_process_RSEND_sender_abort_due_to_no_signature(payment, processor, kyc_data, signature):
+def test_payment_process_RSEND_sender_not_ready_and_abort(payment, processor, kyc_data, signature):
     payment.sender.change_status(StatusObject(Status.needs_kyc_data))
     payment.receiver.change_status(StatusObject(Status.ready_for_settlement))
     assert State.from_payment_object(payment), State.RSEND
 
     bcm = processor.business_context()
     bcm.is_recipient.side_effect = [False]
-    bcm.get_recipient_signature.side_effect = [None]
     bcm.evaluate_kyc.side_effect = [KYCResult.PASS]
+    bcm.sender_ready_to_settle.side_effect = [(False, "no signture provided")]
 
     new_payment = processor.payment_process(payment)
     assert State.from_payment_object(new_payment), State.SABORT
@@ -453,8 +454,8 @@ def test_payment_process_RSOFTSEND_sender_ready_without_RSOFT(payment, processor
 
     bcm = processor.business_context()
     bcm.is_recipient.side_effect = [False]
-    bcm.get_recipient_signature.side_effect = [signature]
     bcm.evaluate_kyc.side_effect = [KYCResult.PASS]
+    bcm.sender_ready_to_settle.side_effect = [(True, "")]
 
     new_payment = processor.payment_process(payment)
     assert State.from_payment_object(new_payment), State.RSOFTSEND
@@ -468,8 +469,8 @@ def test_payment_process_RSOFTSEND_sender_ready_after_RSOFT(payment, processor, 
 
     bcm = processor.business_context()
     bcm.is_recipient.side_effect = [False]
-    bcm.get_recipient_signature.side_effect = [signature]
     bcm.evaluate_kyc.side_effect = [KYCResult.PASS]
+    bcm.sender_ready_to_settle.side_effect = [(True, "")]
 
     new_payment = processor.payment_process(payment)
     assert State.from_payment_object(new_payment), State.RSOFTSEND
@@ -483,8 +484,8 @@ def test_payment_process_RSOFTSEND_sender_abort_due_to_no_siganture(payment, pro
 
     bcm = processor.business_context()
     bcm.is_recipient.side_effect = [False]
-    bcm.get_recipient_signature.side_effect = [None]
     bcm.evaluate_kyc.side_effect = [KYCResult.PASS]
+    bcm.sender_ready_to_settle.side_effect = [(False, "no signture provided")]
 
     new_payment = processor.payment_process(payment)
     assert State.from_payment_object(new_payment), State.SABORT

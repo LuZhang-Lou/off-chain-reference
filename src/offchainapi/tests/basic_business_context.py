@@ -90,3 +90,8 @@ class TestBusinessContext(BusinessContext):
                     "surname": "Smith",
                     "dob": "1973-07-08"
                 })
+
+    async def sender_ready_to_settle(self, payment, ctx):
+        if "recipient_signature" not in payment.data:
+            return (False, "recipient signature is not present")
+        return (True, "")

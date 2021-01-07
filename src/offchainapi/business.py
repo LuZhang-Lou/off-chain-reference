@@ -70,12 +70,11 @@ class BusinessContext:
         """
         raise NotImplementedError()  # pragma: no cover
 
-    def is_recipient(self, payment, ctx=None):
+    def is_recipient(self, payment):
         """ Returns true if the VASP is the recipient of a payment.
 
         Args:
             payment (PaymentCommand): The concerned payment.
-            ctx (Any): Optional context object that business can store custom data
 
         Returns:
             bool: Whether the VASP is the recipient of the payment.
@@ -190,17 +189,34 @@ class BusinessContext:
         '''
         pass
 
-    async def payment_initial_processing(self, payment, ctx=None):
-        '''
-        Allow business to do custom pre-processing to a payment
-        Args:
-            payment (PaymentObject): The concerned payment.
-            ctx (Any): Optional context object that business can store custom data
-        Raises:
-            BusinessForceAbort: When business wants to abort a payment
-        '''
+    async def generate_payment_context(self, payment):
+        """ Generate and return related payment context """
         pass
 
+
+    async def check_travel_rule_requirement(self, payment, ctx) -> None:
+        """
+        Check if Travel Rule is required for this payment
+        Raise BusinessForceAbort if not, and the payment will be aborted
+        """
+        pass
+
+    async def sender_ready_to_settle(self, payment, ctx=None):
+        """
+        called on RSEND or RSOFTSEND by sender.
+        Return Tuple[bool, str], a tuple of whether to settle and reason to abort
+        (only when the first element is False). When the first element
+        is True, we settle the payment, False to abort it and populate
+        the abort reason
+        """
+        pass
+
+    async def payment_post_processing(self, payment, ctx=None):
+        """
+        called at the end of command processing. note that at this point
+        the command is not fully committed yet (by the other side)
+        """
+        pass
 
 
 class VASPInfo:
