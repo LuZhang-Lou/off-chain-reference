@@ -686,18 +686,17 @@ class PaymentProcessor(CommandProcessor):
             new_payment.data[role].change_status(
                 StatusObject(Status.abort, "rejected", str(e))
             )
-        # FIXME not sure we need this , but keep it for now
         # if unseen exception happens, log it and scream
         except Exception as e:
-            # This is an unexpected error, so we need to track it.
-            error_ref = get_unique_string()
             # update status to abort so that we can post process in the finally block
+            # No new payment sent to the other side
             new_payment.data[role].change_status(
+                # no need to hide internal error as this is not sent to the other side
                 StatusObject(Status.abort, "rejected", str(e))
             )
             logger.error(
-                f'[{error_ref}] Error while processing payment {payment.reference_id}'
-                ' return error in metadata & abort.')
+                f'Unexpected error while processing payment {payment.reference_id}'
+                ' return error and abort, no message sent to the other: {e}')
             logger.exception(e)
             raise e
         finally:
