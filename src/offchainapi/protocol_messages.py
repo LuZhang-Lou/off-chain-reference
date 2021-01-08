@@ -73,15 +73,6 @@ class OffChainErrorObject(JSONSerializable):
     def __repr__(self):
         return f'OffChainErrorObject({self.code}, protocol={self.protocol_error})'
 
-# def get_request_cid_helper(command):
-#     """ Extract a cid for a request from a command. """
-#     try:
-#         return command.get_request_cid()
-#     except Exception as e:
-#         # Allow a debug option for simple commands
-#         if __debug__ :
-#             return repr(command)
-#         raise
 
 @JSONSerializable.register
 class CommandRequestObject(JSONSerializable):
@@ -182,7 +173,7 @@ class CommandResponseObject(JSONSerializable):
         Returns:
             bool: If the request has a response that is not a protocol failure.
         """
-        return self.status == 'failure' and self.error.protocol_error
+        return self.status == 'failure' and self.error is not None and self.error.protocol_error
 
     def is_failure(self):
         """ Returns True if the response represents a failure. """

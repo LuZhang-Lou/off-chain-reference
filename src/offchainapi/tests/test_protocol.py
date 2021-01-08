@@ -205,6 +205,12 @@ def test_handle_seen_request(two_channels):
     latest_len = len(client.processor.method_calls)
     assert latest_len == len_after  # check_command, process_command are not called
 
+    # test conflict request
+    conflict_request = request
+    conflict_request.command.command.item = "No Hello"
+    reply = client.handle_request(conflict_request)
+    assert reply.status == 'failure'
+
 
 def test_protocol_server_client_benign(two_channels):
     server, client = two_channels
@@ -223,7 +229,6 @@ def test_protocol_server_client_benign(two_channels):
     assert len(client.committed_commands) == 1
     assert len(client.my_pending_requests) == 0
     assert reply.status == 'success'
-    # FIXME test committed commands
     assert client.committed_commands[request.cid].command.item() == 'Hello'
 
     # Pass the reply back to the server
@@ -242,6 +247,12 @@ def test_protocol_server_client_benign(two_channels):
     assert len(server.my_pending_requests) == 0
     len_after = len(server.processor.method_calls)
     assert len_before == len_after
+
+    # test conflict response
+    conflict_response = reply
+    conflict_response.status = "failure"
+    with pytest.raises(OffChainException):
+        server.handle_response(conflict_response)
 
 def test_protocol_server_conflicting_sequence(two_channels):
     server, client = two_channels
@@ -613,20 +624,6 @@ def test_real_address(three_addresses):
     assert not B.equal(Ap)
     assert A.last_bit() ^ B.last_bit() == 1
     assert A.last_bit() ^ A.last_bit() == 0
-
-
-# def test_sample_command():
-#     store = {}
-#     cmd1 = SampleCommand('hello')
-#     store['hello'] = cmd1.get_object()
-#     cmd2 = SampleCommand('World')
-#     obj = cmd2.get_object()
-
-#     data = obj.get_json_data_dict(JSONFlag.STORE)
-#     obj2 = JSONSerializable.parse(data, JSONFlag.STORE)
-#     assert obj2 == obj, f"{obj2.get_json_data_dict(JSONFlag.STORE)}, {obj.get_json_data_dict(JSONFlag.STORE)}"
-#     # assert obj2.previous_version == obj.previous_version
-
 
 async def test_parse_handle_request_to_future(signed_json_request, channel, key):
     response = await channel.parse_handle_request(signed_json_request)

@@ -34,8 +34,6 @@ class SampleCommand(ProtocolCommand):
         return self.command.item
 
     def __eq__(self, other):
-        # return self.reads_version_map == other.reads_version_map \
-        #     and self.writes_version_map == other.writes_version_map \
         return self.command.item == other.command.item
 
     def __str__(self):

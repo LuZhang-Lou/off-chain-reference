@@ -166,16 +166,6 @@ class VASPPairChannel:
             'committed_commands', CommandRequestObject, root=other_vasp
         )
 
-        # Keep track of object locks (non re-entrant)
-        # Object_locks takes values '__AVAILBLE', '__EXPIRED' or a request cid.
-        #  * '__AVAILBLE' means that the object exists and is available to be used
-        #    by a command.
-        #  * '__EXPIRED' means that an object exists, but has already been used
-        #    by a command that is committed.
-        #  * Other value should be request cid of the comamnd holding this object
-        # self.object_locks = self.storage.make_dict(
-        #     'object_locks', str, root=other_vasp)
-
         self.my_pending_requests = self.storage.make_dict(
                 'my_pending_requests', CommandRequestObject,
                 root=other_vasp)
@@ -516,7 +506,7 @@ class VASPPairChannel:
             # Check the reponse is the same and log warning otherwise.
             if request.response != response:
                 excp = OffChainException(
-                    'Got different responses with cid {request_cid}.'
+                    f'Got different responses with cid {request_cid}.'
                 )
                 excp.response1 = request.response
                 excp.response2 = response
