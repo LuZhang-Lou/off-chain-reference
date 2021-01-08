@@ -91,8 +91,8 @@ class PaymentProcessor(CommandProcessor):
         root = storage_factory.make_dir(self.business.get_my_address())
         processor_dir = storage_factory.make_dir('processor', root=root)
         # map from reference_id to latest version id
-        self.reference_id_index = storage_factory.make_dict(
-            'reference_id_index', str, processor_dir)
+        # self.reference_id_index = storage_factory.make_dict(
+        #     'reference_id_index', str, processor_dir)
 
         # This is the primary store of shared objects.
         # It maps version numbers -> objects.
@@ -105,7 +105,7 @@ class PaymentProcessor(CommandProcessor):
         # crashes since they are run-time objects.
 
         # Mapping: payment reference_id -> List of futures.
-        self.outcome_futures = {}
+        # self.outcome_futures = {}
 
         # Storage for debug futures list
         self.futs = []
@@ -118,10 +118,10 @@ class PaymentProcessor(CommandProcessor):
     # ------ Machinery for supporting async Business context ------
 
     async def process_command_failure_async(
-            self, other_address, command, seq, error):
+            self, other_address, command, cid, error):
         ''' Process any command failures from either ends of a channel.'''
         logger.error(
-            f'(other:{other_address.as_str()}) Command #{seq} Failure: {error} ({error.message})'
+            f'(other:{other_address.as_str()}) Command #{cid} Failure: {error} ({error.message})'
         )
 
         # If this is our own command, that just failed, we should update
@@ -129,27 +129,28 @@ class PaymentProcessor(CommandProcessor):
         try:
             if command.origin != other_address:
                 logger.error(
-                    f'Command with {other_address.as_str()}.#{seq}'
+                    f'Command with {other_address.as_str()}.#{cid}'
                     f' Trigger outcome.')
 
                 # try to construct a payment.
-                payment = command.get_payment(self.object_store)
-                self.set_payment_outcome_exception(
-                                payment.reference_id,
-                                PaymentProcessorRemoteError(error))
+                # payment = command.get_payment(self.object_store)
+                payment = command.get_payment()
+                # self.set_payment_outcome_exception(
+                #                 payment.reference_id,
+                #                 PaymentProcessorRemoteError(error))
             else:
                 logger.error(
-                    f'Command with {other_address.as_str()}.#{seq}'
+                    f'Command with {other_address.as_str()}.#{cid}'
                     f' Error on other VASPs command.')
         except Exception:
             logger.error(
-                f'Command with {other_address.as_str()}.#{seq}'
+                f'Command with {other_address.as_str()}.#{cid}'
                 f' Cannot recover payment or reference_id'
             )
 
         return
 
-    async def process_command_success_async(self, other_address, command, seq):
+    async def process_command_success_async(self, other_address, command, cid):
         """ The asyncronous command processing logic.
 
         Checks all incomming commands from the other VASP, and determines if
@@ -159,7 +160,7 @@ class PaymentProcessor(CommandProcessor):
             other_address (LibraAddress):  The other VASP address in the
                 channel that received this command.
             command (PaymentCommand): The current payment command.
-            seq (int): The sequence number of the payment command.
+            cid (int): cid of the related request.
         """
         # To process commands we should have set a network
         if self.net is None:
@@ -168,15 +169,16 @@ class PaymentProcessor(CommandProcessor):
             )
 
         # Update the outcome of the payment
-        payment = command.get_payment(self.object_store)
-        self.set_payment_outcome(payment)
+        # payment = command.get_payment(self.object_store)
+        payment = command.get_payment()
+        # self.set_payment_outcome(payment)
 
         # If there is no registered obligation to process there is no
         # need to process this command. We log here an error, which
         # might be due to a bug.
         other_address_str = other_address.as_str()
 
-        logger.info(f'(other:{other_address_str}) Process Command #{seq}')
+        logger.info(f'(other:{other_address_str}) Process Command #{cid}')
 
         try:
             # Only respond to commands by other side.
@@ -201,92 +203,92 @@ class PaymentProcessor(CommandProcessor):
                     # can be made. Note that if the payment is already done
                     # (as in ready_for_settlement/abort) we have set an outcome
                     # for it, and this will be a no-op.
-                    self.set_payment_outcome_exception(
-                        payment.reference_id,
-                        PaymentProcessorNoProgress())
+                    # self.set_payment_outcome_exception(
+                    #     payment.reference_id,
+                    #     PaymentProcessorNoProgress())
 
                     is_receiver = self.business.is_recipient(new_payment)
                     role = ['sender', 'receiver'][is_receiver]
 
                     logger.debug(
                         f'(me: {role} other:{other_address_str}) No more commands '
-                        f'created for Payment lastly with seq num #{seq}'
+                        f'created for Payment lastly with cid #{cid}'
                         f' {new_payment}'
                     )
 
         except NetworkException as e:
             logger.warning(
-                f'(other:{other_address_str}) Network error: seq #{seq}: {e}'
+                f'(other:{other_address_str}) Network error: cid #{cid}: {e}'
             )
         except Exception as e:
             logger.error(
                 f'(other:{other_address_str}) '
-                f'Payment processing error: seq #{seq}: {e}',
+                f'Payment processing error: cid #{cid}: {e}',
                 exc_info=True,
             )
 
     # -------- Machinery for notification for outcomes -------
 
-    async def wait_for_payment_outcome(self, reference_id):
-        ''' Returns the payment object with the given a reference_id once the
-        object has the sender and/or receiver status set to either
-        'ready_for_settlement' or 'abort'.
-        '''
-        fut = self.loop.create_future()
+    # async def wait_for_payment_outcome(self, reference_id):
+    #     ''' Returns the payment object with the given a reference_id once the
+    #     object has the sender and/or receiver status set to either
+    #     'ready_for_settlement' or 'abort'.
+    #     '''
+    #     fut = self.loop.create_future()
 
-        if reference_id not in self.outcome_futures:
-            self.outcome_futures[reference_id] = []
+    #     if reference_id not in self.outcome_futures:
+    #         self.outcome_futures[reference_id] = []
 
-        # Register this future to call later.
-        self.outcome_futures[reference_id] += [fut]
+    #     # Register this future to call later.
+    #     self.outcome_futures[reference_id] += [fut]
 
-        # Check to see if the payment is already resolved.
-        if reference_id in self.reference_id_index:
-            payment = self.get_latest_payment_by_ref_id(reference_id)
-            self.set_payment_outcome(payment)
+    #     # Check to see if the payment is already resolved.
+    #     if reference_id in self.reference_id_index:
+    #         payment = self.get_latest_payment_by_ref_id(reference_id)
+    #         self.set_payment_outcome(payment)
 
-        return (await fut)
+    #     return (await fut)
 
-    def set_payment_outcome(self, payment):
-        ''' Updates the list of futures waiting for payment outcomes
-            based on the new payment object provided. If sender or receiver
-            of the payment object are in settled or abort states, then
-            the result is passed on to any waiting futures.
-        '''
+    # def set_payment_outcome(self, payment):
+    #     ''' Updates the list of futures waiting for payment outcomes
+    #         based on the new payment object provided. If sender or receiver
+    #         of the payment object are in settled or abort states, then
+    #         the result is passed on to any waiting futures.
+    #     '''
 
-        # Check if payment is in a final state
-        if not ((payment.sender.status.as_status() == Status.ready_for_settlement and \
-                payment.receiver.status.as_status() == Status.ready_for_settlement) or \
-                payment.sender.status.as_status() == Status.abort or \
-                payment.receiver.status.as_status() == Status.abort):
-            return
+    #     # Check if payment is in a final state
+    #     if not ((payment.sender.status.as_status() == Status.ready_for_settlement and \
+    #             payment.receiver.status.as_status() == Status.ready_for_settlement) or \
+    #             payment.sender.status.as_status() == Status.abort or \
+    #             payment.receiver.status.as_status() == Status.abort):
+    #         return
 
-        # Check if anyone is waiting for this payment.
-        if payment.reference_id not in self.outcome_futures:
-            return
+    #     # Check if anyone is waiting for this payment.
+    #     if payment.reference_id not in self.outcome_futures:
+    #         return
 
-        # Get the futures waiting for an outcome, and delete them
-        # from the list of pending futures.
-        outcome_futures = self.outcome_futures[payment.reference_id]
-        del self.outcome_futures[payment.reference_id]
+    #     # Get the futures waiting for an outcome, and delete them
+    #     # from the list of pending futures.
+    #     outcome_futures = self.outcome_futures[payment.reference_id]
+    #     del self.outcome_futures[payment.reference_id]
 
-        # Update the outcome for each of the futures.
-        for fut in outcome_futures:
-            fut.set_result(payment)
+    #     # Update the outcome for each of the futures.
+    #     for fut in outcome_futures:
+    #         fut.set_result(payment)
 
-    def set_payment_outcome_exception(self, reference_id, payment_exception):
-        # Check if anyone is waiting for this payment.
-        if reference_id not in self.outcome_futures:
-            return
+    # def set_payment_outcome_exception(self, reference_id, payment_exception):
+    #     # Check if anyone is waiting for this payment.
+    #     if reference_id not in self.outcome_futures:
+    #         return
 
-        # Get the futures waiting for an outcome, and delete them
-        # from the list of pending futures.
-        outcome_futures = self.outcome_futures[reference_id]
-        del self.outcome_futures[reference_id]
+    #     # Get the futures waiting for an outcome, and delete them
+    #     # from the list of pending futures.
+    #     outcome_futures = self.outcome_futures[reference_id]
+    #     del self.outcome_futures[reference_id]
 
-        # Update the outcome for each of the futures.
-        for fut in outcome_futures:
-            fut.set_exception(payment_exception)
+    #     # Update the outcome for each of the futures.
+    #     for fut in outcome_futures:
+    #         fut.set_exception(payment_exception)
 
     # -------- Implements CommandProcessor interface ---------
 
@@ -297,20 +299,20 @@ class PaymentProcessor(CommandProcessor):
     def check_command(self, my_address, other_address, command):
         ''' Overrides CommandProcessor. '''
 
-        new_payment = command.get_payment(self.object_store)
+        new_payment = command.get_payment()
 
         # Ensure that the two parties involved are in the VASP channel
-        parties = set([
+        parties = {
             new_payment.sender.get_onchain_address_encoded_str(),
             new_payment.receiver.get_onchain_address_encoded_str()
-        ])
+        }
 
         other_addr_str = other_address.as_str()
 
-        needed_parties = set([
+        needed_parties = {
             my_address.as_str(),
             other_addr_str
-        ])
+        }
 
         if parties != needed_parties:
             raise PaymentLogicError(
@@ -329,7 +331,9 @@ class PaymentProcessor(CommandProcessor):
 
         # Only check the commands we get from others.
         if origin_str == other_addr_str:
-            if command.reads_version_map == []:
+            # if command.reads_version_map == []:
+            state = State.from_payment_object(new_payment)
+            if state == State.SINIT:
 
                 # Check that the reference_id is correct
                 # Only do this for the definition of new payments, after that
@@ -345,19 +349,18 @@ class PaymentProcessor(CommandProcessor):
 
                 self.check_initial_payment(new_payment)
             else:
-
                 # Ensure the payment ref_id stays the same
-                old_ref_id, _ = command.reads_version_map[0]
-                new_ref_id, _ = command.writes_version_map[0]
-                if old_ref_id != new_ref_id:
-                    raise PaymentLogicError(
-                        OffChainErrorCode.payment_wrong_structure,
-                        f'Expected the reference id to not change,'
-                        f' got: {old_ref_id} and {new_ref_id}'
-                    )
-
-                old_version = command.get_previous_version_number()
-                old_payment = self.object_store[old_version]
+                # old_ref_id, _ = command.reads_version_map[0]
+                # new_ref_id, _ = command.writes_version_map[0]
+                # if old_ref_id != new_ref_id:
+                #     raise PaymentLogicError(
+                #         OffChainErrorCode.payment_wrong_structure,
+                #         f'Expected the reference id to not change,'
+                #         f' got: {old_ref_id} and {new_ref_id}'
+                #     )
+                # FIXME: let object_store only the previous object
+                # old_version = command.get_previous_version_number()
+                old_payment = self.object_store[new_payment.reference_id]
                 self.check_new_update(old_payment, new_payment)
 
     def process_command(self, other_addr, command,
@@ -366,7 +369,7 @@ class PaymentProcessor(CommandProcessor):
 
         other_str = other_addr.as_str()
 
-        # Call the failure handler and exit.
+        # If failue, call the failure handler and exit.
         if not status_success:
             fut = self.loop.create_task(self.process_command_failure_async(
                 other_addr, command, cid, error)
@@ -375,14 +378,17 @@ class PaymentProcessor(CommandProcessor):
                 self.futs += [fut]
             return fut
 
-        # Creates new objects.
-        new_versions = command.get_new_object_versions()
-        for version in new_versions:
-            obj = command.get_object(version, self.object_store)
-            self.object_store[version] = obj
+        # If success, create and record new objects
+        # FIXME: if we just override here, do we need to reference old objects later?
+        # new_versions = command.get_new_object_versions()
+        # for version in new_versions:
+        #     obj = command.get_object(version, self.object_store)
+        #     self.object_store[version] = obj
+        payment = command.get_payment()
+        self.object_store[payment.reference_id] = payment
 
         # Update the Index of Reference ID -> Payment.
-        self.store_latest_payment_by_ref_id(command)
+        # self.ommand)
 
         # Spin further command processing in its own task.
         logger.debug(f'(other:{other_str}) Schedule cmd {cid}')
@@ -398,43 +404,44 @@ class PaymentProcessor(CommandProcessor):
 
     # -------- Get Payment API commands --------
 
-    def get_latest_payment_by_ref_id(self, ref_id):
-        ''' Returns the latest payment with the reference ID provided.'''
-        version = self.reference_id_index.try_get(ref_id)
-        if version is None:
-            raise KeyError(ref_id)
-        return self.object_store[version]
+    # def get_latest_payment_by_ref_id(self, ref_id):
+    #     ''' Returns the latest payment with the reference ID provided.'''
+    #     # version = self.reference_id_index.try_get(ref_id)
+    #     # if version is None:
+    #     #     raise KeyError(ref_id)
+    #     # return self.object_store[version]
+    #     return self.object_store[ref_id]
 
-    def get_payment_history_by_ref_id(self, ref_id):
-        ''' Generator that returns all versions of a
-            payment with a given reference ID
-            in reverse causal order (newest first). '''
-        payment = self.get_latest_payment_by_ref_id(ref_id)
-        yield payment
+    # def get_payment_history_by_ref_id(self, ref_id):
+    #     ''' Generator that returns all versions of a
+    #         payment with a given reference ID
+    #         in reverse causal order (newest first). '''
+    #     payment = self.get_latest_payment_by_ref_id(ref_id)
+    #     yield payment
 
-        if payment.previous_version is not None:
-            p_version = payment.previous_version
-            payment = self.object_store[p_version]
-            yield payment
+    #     if payment.previous_version is not None:
+    #         p_version = payment.previous_version
+    #         payment = self.object_store[p_version]
+    #         yield payment
 
-    def store_latest_payment_by_ref_id(self, command):
-        ''' Internal command to update the payment index '''
-        payment = command.get_payment(self.object_store)
+    # def store_latest_payment_by_ref_id(self, command):
+    #     ''' Internal command to update the payment index '''
+    #     payment = command.get_payment(self.object_store)
 
-        # Update the Index of Reference ID -> Payment.
-        ref_id = payment.reference_id
+    #     # Update the Index of Reference ID -> Payment.
+    #     ref_id = payment.reference_id
 
-        # Write the new payment to the index of payments by
-        # reference ID to support they GetPaymentAPI.
-        payment_version = self.reference_id_index.try_get(ref_id)
-        if payment_version:
-            # We check that the previous version is present.
-            # If so we update it with the new one.
-            dependencies_versions = command.get_dependencies()
-            if payment_version in dependencies_versions:
-                self.reference_id_index[ref_id] = payment.version
-        else:
-            self.reference_id_index[ref_id] = payment.version
+    #     # Write the new payment to the index of payments by
+    #     # reference ID to support they GetPaymentAPI.
+    #     payment_version = self.reference_id_index.try_get(ref_id)
+    #     if payment_version:
+    #         # We check that the previous version is present.
+    #         # If so we update it with the new one.
+    #         dependencies_versions = command.get_dependencies()
+    #         if payment_version in dependencies_versions:
+    #             self.reference_id_index[ref_id] = payment.version
+    #     else:
+    #         self.reference_id_index[ref_id] = payment.version
 
     # ----------- END of CommandProcessor interface ---------
 
@@ -609,7 +616,8 @@ class PaymentProcessor(CommandProcessor):
         is_sender = not is_receiver
         role = ['sender', 'receiver'][is_receiver]
 
-        new_payment = payment.new_version(store=self.object_store)
+        # new_payment = payment.new_version(store=self.object_store)
+        new_payment = payment.new_version()
 
         ctx = None
 
@@ -682,7 +690,8 @@ class PaymentProcessor(CommandProcessor):
                     )
 
         except BusinessForceAbort as e:
-            new_payment = payment.new_version(new_payment.version, store=self.object_store)
+            # new_payment = payment.new_version(new_payment.version, store=self.object_store)
+            # new_payment = payment.new_version(new_payment.version, store=self.object_store)
             new_payment.data[role].change_status(
                 StatusObject(Status.abort, "rejected", str(e))
             )

@@ -13,30 +13,30 @@ class SampleObject(SharedObject):
 
 @JSONSerializable.register
 class SampleCommand(ProtocolCommand):
-    def __init__(self, item, deps=None):
+    def __init__(self, item):
         ProtocolCommand.__init__(self)
         command = SampleObject(item)
-        if deps is None:
-            self.reads_version_map = []
-        else:
-            self.reads_version_map = [(d,d) for d in deps]
-        self.writes_version_map   = [(command.item, command.item)]
+        # if deps is None:
+        #     self.reads_version_map = []
+        # else:
+        #     self.reads_version_map = [(d,d) for d in deps]
+        # self.writes_version_map   = [(command.item, command.item)]
         self.command   = command
         self.always_happy = True
 
-    def get_request_cid(self):
-        return self.item()
+    # def get_request_cid(self):
+    #     return self.item()
 
-    def get_object(self, version_number, dependencies):
+    def get_object(self):
         return self.command
 
     def item(self):
         return self.command.item
 
     def __eq__(self, other):
-        return self.reads_version_map == other.reads_version_map \
-            and self.writes_version_map == other.writes_version_map \
-            and self.command.item == other.command.item
+        # return self.reads_version_map == other.reads_version_map \
+        #     and self.writes_version_map == other.writes_version_map \
+        return self.command.item == other.command.item
 
     def __str__(self):
         return 'CMD(%s)' % self.item()

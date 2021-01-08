@@ -99,9 +99,7 @@ def test_complicated_objects(db, payment):
     cmd_dict['foo'] = cmd
     assert cmd_dict['foo'] == cmd
 
-    cmd.writes_version_map = [('xxxxxxxx', 'xxxxxxxx')]
-    assert cmd_dict['foo'] != cmd
-    cmd_dict['foo'] = cmd
+    cmd.uninteresting_fields = "uninteresting"
     assert cmd_dict['foo'] == cmd
 
     request = CommandRequestObject(cmd)

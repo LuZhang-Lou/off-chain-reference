@@ -577,7 +577,7 @@ def test_process_command_success_no_proc(payment, loop, db):
     cmd.set_origin(my_addr)
 
     # No obligation means no processing
-    coro = processor.process_command_success_async(other_addr, cmd, seq=10)
+    coro = processor.process_command_success_async(other_addr, cmd, cid="cid")
     _ = loop.run_until_complete(coro)
 
 def test_process_command_success_vanilla(payment, loop, db):
@@ -595,41 +595,45 @@ def test_process_command_success_vanilla(payment, loop, db):
     cmd.set_origin(other_addr)
 
     # No obligation means no processing
-    coro = processor.process_command_success_async(other_addr, cmd, seq=10)
+    coro = processor.process_command_success_async(other_addr, cmd, cid="cid")
     _ = loop.run_until_complete(coro)
-    print(f"@@@@@@@@@@@@@ method calls: {net.method_calls}")
 
     assert [call[0] for call in net.method_calls] == [
         'sequence_command', 'send_request']
 
+
 async def test_process_command_happy_path(payment, loop, db):
+    assert State.from_payment_object(payment) == State.SINIT
+
     store = StorableFactory(db)
 
-    my_addr = LibraAddress.from_bytes("lbr", b'B'*16)
-    other_addr = LibraAddress.from_bytes("lbr", b'A'*16)
+    my_addr = LibraAddress.from_bytes("lbr", b'A'*16)
+    other_addr = LibraAddress.from_bytes("lbr", b'B'*16)
     my_bcm = TestBusinessContext(my_addr)
     other_bcm = TestBusinessContext(other_addr)
     # Use the same store/DB backend
+    net = AsyncMock(Aionet)
     my_processor = PaymentProcessor(my_bcm, store, loop)
     other_processor = PaymentProcessor(other_bcm, store, loop)
-    net = AsyncMock(Aionet)
     my_processor.set_network(net)
     other_processor.set_network(net)
 
-    other_cmd = PaymentCommand(payment)
-    other_cmd.set_origin(other_addr)
-
-    # me: process success command
     assert len(my_processor.object_store) == 0
-    fut = my_processor.process_command(other_addr, other_cmd, other_cmd.get_request_cid(), True)
+    assert len(other_processor.object_store) == 0
 
+    sinit_my_cmd = PaymentCommand(payment)
+    sinit_my_cmd.set_origin(my_addr)
+
+    my_fut = my_processor.process_command(other_addr, sinit_my_cmd, "cid", True)
     assert len(my_processor.object_store) == 1
-    other_cmd_new_vers = list(other_cmd.get_new_object_versions())
-    assert len(other_cmd_new_vers) == 1
-    assert my_processor.object_store[other_cmd_new_vers[0]] == payment
+    assert my_processor.object_store[payment.reference_id] == payment
+    await my_fut
 
-    assert my_processor.get_latest_payment_by_ref_id(payment.reference_id) == payment
-    await fut
+    other_fut = other_processor.process_command(my_addr, sinit_my_cmd, "cid", True)
+    assert len(other_processor.object_store) == 1
+    assert other_processor.object_store[payment.reference_id] == payment
+
+    await other_fut
 
     # Make some differences, and test that commands are isolated per VASPs
     payment2 = copy.deepcopy(payment)
@@ -640,18 +644,11 @@ async def test_process_command_happy_path(payment, loop, db):
     my_cmd = PaymentCommand(payment2)
     my_cmd.set_origin(my_addr)
     # other: process success command
-    assert len(other_processor.object_store) == 0
-    fut = other_processor.process_command(other_addr, my_cmd, my_cmd.get_request_cid(), True)
-
     assert len(other_processor.object_store) == 1
-    my_cmd_new_vers = list(my_cmd.get_new_object_versions())
-    assert len(my_cmd_new_vers) == 1
+    fut = other_processor.process_command(other_addr, my_cmd, "cid", True)
+    assert other_processor.object_store[payment.reference_id] == payment2
 
     # Even though payment and payment2 have the same version id and share
     # the db backend, they can distinguish the payments
-    assert other_processor.object_store[my_cmd_new_vers[0]] == payment2
-    assert my_processor.object_store[other_cmd_new_vers[0]] != payment2
-    assert my_processor.object_store[other_cmd_new_vers[0]] == payment
-
-    assert other_processor.get_latest_payment_by_ref_id(payment2.reference_id) == payment2
+    assert other_processor.object_store[payment.reference_id] != my_processor.object_store[payment.reference_id]
     await fut

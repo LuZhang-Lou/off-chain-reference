@@ -8,6 +8,7 @@ from .shared_object import SharedObject
 from .status_logic import Status
 from .libra_address import LibraAddress
 import typing
+from copy import deepcopy
 
 import json
 
@@ -285,9 +286,10 @@ class PaymentObject(SharedObject, StructureChecker, JSONSerializable):
         SharedObject.__init__(self)
         return self
 
-    def new_version(self, new_version=None, store=None):
-        """ Override SharedObject. """
-        clone = SharedObject.new_version(self, new_version, store)
+    def new_version(self):
+        # clone = SharedObject.new_version(self, new_version, store)
+        # TODO optmize from reading in db?
+        clone = deepcopy(self)
         clone.flatten()
         return clone
 

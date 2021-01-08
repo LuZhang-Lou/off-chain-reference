@@ -23,7 +23,7 @@ def test_payment_command_serialization_parse(payment):
     obj = JSONSerializable.parse(data, JSONFlag.NET)
     assert obj == cmd
 
-    cmd_s = SampleCommand('Hello', deps=['World'])
+    cmd_s = SampleCommand('Hello')
     data2 = cmd_s.get_json_data_dict(JSONFlag.NET)
     cmd_s2 = JSONSerializable.parse(data2, JSONFlag.NET)
     assert cmd_s == cmd_s2
@@ -47,29 +47,19 @@ def test_payment_end_to_end_serialization(payment):
     assert request == request2
 
 
-def test_payment_command_missing_dependency_fail(payment):
-    new_payment = payment.new_version('v1')
-    cmd = PaymentCommand(new_payment)
-    with pytest.raises(PaymentLogicError):
-        cmd.get_object(new_payment.get_version(), {})
+def test_payment_new_vesrion_identical(payment):
+    new_payment = payment.new_version()
+    assert new_payment == payment
+
 
 def test_get_payment(payment, db):
-
     # Get a new payment -- no need for any dependency
     cmd = PaymentCommand(payment)
-    payment_copy = cmd.get_payment({}) # Empty dependency store
+    payment_copy = cmd.get_payment() # Empty dependency store
     assert payment_copy == payment
 
     # A command that updates a payment to new version
     new_payment = payment.new_version()
     new_cmd = PaymentCommand(new_payment)
-
-    with pytest.raises(PaymentLogicError):
-        # Fail: offchainapi.payment_command.PaymentLogicError:
-        #       Cound not find payment dependency:
-        _ = new_cmd.get_payment({})
-
-    object_store = StorableDict(db, 'root', PaymentObject)
-    object_store[payment.get_version()] = payment
-    new_payment_copy = new_cmd.get_payment(object_store)
-    assert new_payment == new_payment_copy
+    assert new_cmd == cmd
+    assert new_cmd.get_payment() == payment

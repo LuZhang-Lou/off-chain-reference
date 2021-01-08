@@ -6,6 +6,7 @@ from .payment import PaymentObject
 from .utils import JSONSerializable
 from .command_processor import CommandValidationError
 from .errors import OffChainErrorCode
+from .status_logic import State
 
 
 # Functions to check incoming diffs
@@ -29,84 +30,88 @@ class PaymentCommand(ProtocolCommand):
     def __init__(self, payment_object):
         ProtocolCommand.__init__(self)
         ref_id = payment_object.reference_id
-        self.reads_version_map = [(ref_id, payment_object.previous_version)] \
-            if payment_object.previous_version else []
-        self.writes_version_map = [(ref_id, payment_object.get_version())]
+        # self.reads_version_map = [(ref_id, payment_object.previous_version)] \
+        #     if payment_object.previous_version else []
+        # self.writes_version_map = [(ref_id, payment_object.get_version())]
+
+        # FIXME : rename this to self.payment ??
         self.command = payment_object.get_full_diff_record()
 
     def __eq__(self, other):
         return ProtocolCommand.__eq__(self, other) \
             and self.command == other.command
 
-    def get_request_cid(self):
-        """ Suggests the cid that the request with this command should contain.
+    # def get_request_cid(self):
+    #     """ Suggests the cid that the request with this command should contain.
 
-            Each cid should ideally be unique, and the same command should create a
-            request with the same cid. """
+    #         Each cid should ideally be unique, and the same command should create a
+    #         request with the same cid. """
 
-        _, new_version = self.writes_version_map[0]
-        return new_version
+    #     _, new_version = self.writes_version_map[0]
+    #     return new_version
 
 
-    def get_object(self, version_number, dependencies):
-        """ Returns the new payment object defined by this command. Since this
-        may depend on a previous payment (when it is an update) we need to
-        provide a dictionary of its dependencies.
+    # def get_object(self, version_number, dependencies):
+    #     """ Returns the new payment object defined by this command. Since this
+    #     may depend on a previous payment (when it is an update) we need to
+    #     provide a dictionary of its dependencies.
 
-        Args:
-            version_number (int): The version number
-            dependencies (list): The list of dependencies.
+    #     Args:
+    #         version_number (int): The version number
+    #         dependencies (list): The list of dependencies.
 
-        Raises:
-            PaymentLogicError: If the payment depends on more than one other
-                               payment.
+    #     Raises:
+    #         PaymentLogicError: If the payment depends on more than one other
+    #                            payment.
 
-        Returns:
-            PaymentObject: The updated payment.
-        """
-        # First find dependencies & created objects.
-        new_version = self.get_new_version_number()
-        if new_version != version_number:
-            raise PaymentLogicError(
-                OffChainErrorCode.payment_dependency_error,
-                f"Unknown object {version_number} (only know {new_version})"
-            )
+    #     Returns:
+    #         PaymentObject: The updated payment.
+    #     """
+    #     # First find dependencies & created objects.
+    #     new_version = self.get_new_version_number()
+    #     if new_version != version_number:
+    #         raise PaymentLogicError(
+    #             OffChainErrorCode.payment_dependency_error,
+    #             f"Unknown object {version_number} (only know {new_version})"
+    #         )
 
-        # This indicates the command creates a fresh payment.
-        if len(self.reads_version_map) == 0:
-            payment = PaymentObject.create_from_record(self.command)
-            payment.set_version(new_version)
-            return payment
+    #     # This indicates the command creates a fresh payment.
+    #     if len(self.reads_version_map) == 0:
+    #         payment = PaymentObject.create_from_record(self.command)
+    #         payment.set_version(new_version)
+    #         return payment
 
-        # This command updates a previous payment.
-        elif len(self.reads_version_map) == 1:
-            _, dep = self.reads_version_map[0]
-            if dep not in dependencies:
-                raise PaymentLogicError(
-                    OffChainErrorCode.payment_dependency_error,
-                    f'Could not find payment dependency: {dep}'
-                )
-            dep_object = dependencies[dep]
+    #     # This command updates a previous payment.
+    #     elif len(self.reads_version_map) == 1:
+    #         _, dep = self.reads_version_map[0]
+    #         if dep not in dependencies:
+    #             raise PaymentLogicError(
+    #                 OffChainErrorCode.payment_dependency_error,
+    #                 f'Could not find payment dependency: {dep}'
+    #             )
+    #         dep_object = dependencies[dep]
 
-            # Need to get a deepcopy new version.
-            updated_payment = dep_object.new_version(new_version, store=dependencies)
+    #         # Need to get a deepcopy new version.
+    #         updated_payment = dep_object.new_version(new_version, store=dependencies)
 
-            PaymentObject.from_full_record(
-                self.command, base_instance=updated_payment)
-            return updated_payment
+    #         PaymentObject.from_full_record(
+    #             self.command, base_instance=updated_payment)
+    #         return updated_payment
 
-        raise PaymentLogicError(
-            OffChainErrorCode.payment_wrong_structure,
-            f"Should depend on exactly one object, got: {len(self.reads_version_map)}")
+    #     raise PaymentLogicError(
+    #         OffChainErrorCode.payment_wrong_structure,
+    #         f"Should depend on exactly one object, got: {len(self.reads_version_map)}")
 
-    def get_payment(self, dependencies):
-        version = self.get_new_version_number()
+    # def get_payment(self, dependencies):
+    def get_payment(self):
+        # return self.command
+        # to simplify, no partial object is allowed
+        # TODO more simplification for get_full_diff_record & create_from_record
+        payment = PaymentObject.create_from_record(self.command)
+        return payment
 
-        # Optimization to prevent repeated checks and deep copying
-        if version in dependencies:
-            return dependencies[version]
-
-        return self.get_object(version, dependencies)
+    def get_reference_id(self):
+        return self.get_payment().reference_id
 
     def get_json_data_dict(self, flag):
         ''' Get a data dictionary compatible with JSON serilization
@@ -121,6 +126,9 @@ class PaymentCommand(ProtocolCommand):
                 dict: A data dictionary compatible with JSON serilization.
         '''
         data_dict = ProtocolCommand.get_json_data_dict(self, flag)
+
+        # FIXME: step 1: rename sel.fcommand to see if it is reference outside this file
+        # step2: get_json_data_dict() on the fly
         data_dict['payment'] = self.command
         return data_dict
 
@@ -146,44 +154,44 @@ class PaymentCommand(ProtocolCommand):
         assert isinstance(self, PaymentCommand)
         self.command = data['payment']
 
-        if len(self.reads_version_map) > 1:
-            # TODO: Test for such errors within protocol.py tests.
-            raise PaymentLogicError(
-                OffChainErrorCode.payment_wrong_structure,
-                "A payment can only depend on a single previous payment"
-            )
+        # if len(self.reads_version_map) > 1:
+        #     # TODO: Test for such errors within protocol.py tests.
+        #     raise PaymentLogicError(
+        #         OffChainErrorCode.payment_wrong_structure,
+        #         "A payment can only depend on a single previous payment"
+        #     )
 
-        if len(self.writes_version_map) != 1:
-            # TODO: Test for such errors within protocol.py tests.
-            raise PaymentLogicError(
-                OffChainErrorCode.payment_wrong_structure,
-                "A payment always creates a new payment")
+        # if len(self.writes_version_map) != 1:
+        #     # TODO: Test for such errors within protocol.py tests.
+        #     raise PaymentLogicError(
+        #         OffChainErrorCode.payment_wrong_structure,
+        #         "A payment always creates a new payment")
 
         return self
 
     # Helper functions for payment commands specifically
-    def get_previous_version_number(self):
-        """ Returns the version of the previous payment, or None if this
-        command creates a new payment
+    # def get_previous_version_number(self):
+    #     """ Returns the version of the previous payment, or None if this
+    #     command creates a new payment
 
-        Returns:
-            The version of the previous payment, or None if this
-            command creates a new payment.
-        """
-        # This is  ensured from the constructors.
-        assert len(self.reads_version_map) <= 1
-        if len(self.reads_version_map) == 0:
-            return None
-        _, prev_version =  self.reads_version_map[0]
-        return prev_version
+    #     Returns:
+    #         The version of the previous payment, or None if this
+    #         command creates a new payment.
+    #     """
+    #     # This is  ensured from the constructors.
+    #     assert len(self.reads_version_map) <= 1
+    #     if len(self.reads_version_map) == 0:
+    #         return None
+    #     _, prev_version =  self.reads_version_map[0]
+    #     return prev_version
 
-    def get_new_version_number(self):
-        ''' Returns the version number of the payment.
+    # def get_new_version_number(self):
+    #     ''' Returns the version number of the payment.
 
-            Returns:
-                int: The version number of the payment.
-        '''
-        # Ensured from the constructors.
-        assert len(self.writes_version_map) == 1
-        _, new_version = self.writes_version_map[0]
-        return new_version
+    #         Returns:
+    #             int: The version number of the payment.
+    #     '''
+    #     # Ensured from the constructors.
+    #     assert len(self.writes_version_map) == 1
+    #     _, new_version = self.writes_version_map[0]
+    #     return new_version

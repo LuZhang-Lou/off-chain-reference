@@ -3,6 +3,7 @@
 
 from .utils import JSONSerializable, JSONParsingError, JSONFlag
 from .errors import OffChainErrorCode, OffChainException, OffChainProtocolError
+from uuid import uuid4
 
 class OffChainErrorObject(JSONSerializable):
     """Represents an OffChainErrorObject.
@@ -72,22 +73,23 @@ class OffChainErrorObject(JSONSerializable):
     def __repr__(self):
         return f'OffChainErrorObject({self.code}, protocol={self.protocol_error})'
 
-def get_request_cid_helper(command):
-    """ Extract a cid for a request from a command. """
-    try:
-        return command.get_request_cid()
-    except Exception as e:
-        # Allow a debug option for simple commands
-        if __debug__ :
-            return repr(command)
-        raise
+# def get_request_cid_helper(command):
+#     """ Extract a cid for a request from a command. """
+#     try:
+#         return command.get_request_cid()
+#     except Exception as e:
+#         # Allow a debug option for simple commands
+#         if __debug__ :
+#             return repr(command)
+#         raise
 
 @JSONSerializable.register
 class CommandRequestObject(JSONSerializable):
     """ Represents a command of the Off chain protocol. """
 
     def __init__(self, command):
-        self.cid = get_request_cid_helper(command)
+        # self.cid = get_request_cid_helper(command)
+        self.cid = str(uuid4())
         self.command = command
         self.command_type = command.json_type()
 
@@ -101,18 +103,6 @@ class CommandRequestObject(JSONSerializable):
             and self.command == other.command \
             and self.command_type == other.command_type \
             and self.response == other.response
-
-    def is_same_command(self, other):
-        """Returns true if the other command is the same as this one,
-            Used to detect conflicts in case of buggy corresponding VASP.
-
-        Args:
-            other (CommandRequestObject): Another command.
-
-        Returns:
-            bool: If the other command is the same as this one.
-        """
-        return self.command == other.command
 
     def has_response(self):
         """Returns true if request had a response, false otherwise.
