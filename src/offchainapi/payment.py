@@ -21,7 +21,6 @@ class KYCData(StructureChecker):
     """
 
     fields = [
-        ("payload_type", str, REQUIRED, WRITE_ONCE),
         ("payload_version", int, REQUIRED, WRITE_ONCE),
         ("type", str, REQUIRED, WRITE_ONCE),
         ("given_name", str, OPTIONAL, WRITE_ONCE),
@@ -116,10 +115,10 @@ class PaymentActor(StructureChecker):
         ('kyc_data', KYCData, OPTIONAL, WRITE_ONCE),
         ('additional_kyc_data', str, OPTIONAL, WRITE_ONCE),
         ('status', StatusObject, REQUIRED, UPDATABLE),
-        ('metadata', list, REQUIRED, UPDATABLE)
+        ('metadata', list, OPTIONAL, UPDATABLE)
     ]
 
-    def __init__(self, address, status, metadata):
+    def __init__(self, address, status, metadata=[]):
         StructureChecker.__init__(self)
         self.update({
             'address': address,
@@ -206,7 +205,7 @@ class PaymentAction(StructureChecker):
             amount (int): The amount of the payment.
             currency (str): The currency of the payment.
             action (str): The action of the payment; eg. a refund.
-            timestamp (str): The timestamp of the payment.
+            timestamp (int): unixtime
         """
         StructureChecker.__init__(self)
         self.update({
@@ -287,7 +286,6 @@ class PaymentObject(SharedObject, StructureChecker, JSONSerializable):
         return self
 
     def new_version(self):
-        # clone = SharedObject.new_version(self, new_version, store)
         # TODO optmize from reading in db?
         clone = deepcopy(self)
         clone.flatten()

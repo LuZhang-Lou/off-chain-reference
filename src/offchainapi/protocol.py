@@ -29,18 +29,8 @@ NetMessage = namedtuple('NetMessage',
      'raw',  # The Python CommandRequestObject or CommandResponseObject object
      ])
 
-# """ A struct for dependencies in object_locks """
-# DepLocks = namedtuple('DepLocks', ['mising_deps', 'used_deps', 'locked_deps'])
 
 logger = logging.getLogger(name='libra_off_chain_api.protocol')
-
-
-# LOCK_AVAILABLE = "__AVAILABLE"
-# LOCK_EXPIRED = "__EXPIRED"
-
-
-# class DependencyException(OffChainException):
-#     pass
 
 
 class OffChainVASP:
@@ -409,7 +399,7 @@ class VASPPairChannel:
                 payment_specific_message = None
                 if isinstance(command, PaymentCommand):
                     state = State.from_payment_object(command.get_payment())
-                    reference_id = command.get_reference_id()
+                    reference_id = command.get_payment().reference_id
                     payment_specific_message = f"ref_id: {reference_id}, state: {state.value}"
                 logger.error(
                     f'(other:{self.other_address_str}) '
@@ -417,7 +407,7 @@ class VASPPairChannel:
                 )
                 return response
 
-        # else: # Everything looks good, try to check command's integrity
+        # never see this request before, try to check command's integrity
         try:
             my_address = self.get_my_address()
             other_address = self.get_other_address()

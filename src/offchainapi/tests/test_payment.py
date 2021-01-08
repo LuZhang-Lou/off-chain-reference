@@ -22,9 +22,6 @@ def test_json_payment_flags(payment):
     data = json.dumps(payment.get_json_data_dict(flag=JSONFlag.STORE))
     pay2 = PaymentObject.from_json_data_dict(json.loads(data), flag=JSONFlag.STORE)
 
-    # assert payment.version == pay2.version
-    # assert payment.version is not None
-
 
 def test_kyc_data_missing_payment_reference_fail():
     with pytest.raises(StructureException):
@@ -89,20 +86,27 @@ def test_status_valdation():
 
 def test_payment_actor_creation():
     snone = StatusObject(Status.none)
-    actor = PaymentActor('XYZ', snone, [])
+    actor = PaymentActor('XYZ', snone)
+    actor = PaymentActor('XYZ', snone, ["abc"])
 
     with pytest.raises(StructureException):
         # Bad subaddress type
-        _ = PaymentActor(0, snone, [])
+        _ = PaymentActor(0, snone)
 
     with pytest.raises(StructureException):
         # Bad status type
-        _ = PaymentActor('XYZ', 0, [])
+        _ = PaymentActor('XYZ', 0)
 
     with pytest.raises(StructureException):
         # Bad metadata type
         _ = PaymentActor('XYZ', snone, 0)
 
+def test_add_metadata():
+    snone = StatusObject(Status.none)
+    actor = PaymentActor('XYZ', snone, ["abc"])
+    assert actor.metadata == ["abc"]
+    actor.add_metadata("def")
+    assert actor.metadata == ["abc", "def"]
 
 def test_payment_actor_update_status(sender_actor):
     sender_actor.change_status(StatusObject(Status.needs_kyc_data))
@@ -121,7 +125,6 @@ def test_payment_actor_update_kyc(sender_actor, kyc_data):
 
 def test_full_kyc_info():
     full_kyc = {
-            "payload_type": "KYC_DATA",
             "payload_version": 1,
             "type": "individual",
             "given_name": "Alice",
@@ -185,7 +188,7 @@ def test_specific():
                     'receiver': {
                         'address': 'bbbb',
                         'status': {'status': 'needs_kyc_data'},
-                        'metadata': [],
+                        'metadata': ["haha"],
                         'kyc_data': {
                             "payload_type": "KYC_DATA",
                             "payload_version": 1,
@@ -203,7 +206,8 @@ def test_specific():
                     },
                     'recipient_signature': 'QkJCQkJCQkJCQkJCQkJCQg==.ref 0.SIGNED'
                     }
-    PaymentObject.from_full_record(json_struct)
+    payment = PaymentObject.from_full_record(json_struct)
+    assert payment.receiver.metadata == ["haha"]
 
 
 def test_update_with_same(payment):

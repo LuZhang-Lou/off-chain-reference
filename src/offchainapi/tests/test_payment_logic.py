@@ -25,13 +25,13 @@ import copy
 @pytest.fixture
 def sender_actor():
     addr = LibraAddress.from_bytes("lbr", b'A'*16, b'a'*8).as_str()
-    return PaymentActor(addr, StatusObject(Status.needs_kyc_data), [])
+    return PaymentActor(addr, StatusObject(Status.needs_kyc_data))
 
 
 @pytest.fixture
 def receiver_actor():
     addr = LibraAddress.from_bytes("lbr", b'B'*16, b'b'*8).as_str()
-    return PaymentActor(addr, StatusObject(Status.none), [])
+    return PaymentActor(addr, StatusObject(Status.none))
 
 
 @pytest.fixture
@@ -77,7 +77,7 @@ def test_check_initial_payment_bad_initial_state(payment, processor):
 
 def test_check_initial_payment_bad_sender_actor_address(payment, processor):
     snone = StatusObject(Status.needs_kyc_data)
-    actor = PaymentActor('XYZ', snone, [])
+    actor = PaymentActor('XYZ', snone)
 
     bcm = processor.business_context()
     bcm.is_recipient.return_value = True
@@ -99,7 +99,7 @@ def test_check_initial_payment_allow_empty_sender_actor_subaddress(payment, proc
 
 def test_check_initial_payment_bad_receiver_actor_address(payment, processor):
     snone = StatusObject(Status.none)
-    actor = PaymentActor('XYZ', snone, [])
+    actor = PaymentActor('XYZ', snone)
 
     bcm = processor.business_context()
     bcm.is_recipient.return_value = True

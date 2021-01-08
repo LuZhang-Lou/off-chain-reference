@@ -158,7 +158,6 @@ class sample_business(BusinessContext):
                    BusinessNotAuthorized.
         '''
         return KYCData({
-            "payload_type": "KYC_DATA",
             "payload_version": 1,
             "type": "individual",
         })

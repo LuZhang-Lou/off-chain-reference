@@ -33,13 +33,13 @@ def three_addresses():
 @pytest.fixture
 def sender_actor():
     s_addr = LibraAddress.from_bytes("lbr", b'A'*16, b'a'*8).as_str()
-    return PaymentActor(s_addr, StatusObject(Status.none), [])
+    return PaymentActor(s_addr, StatusObject(Status.none))
 
 
 @pytest.fixture
 def receiver_actor():
     s_addr = LibraAddress.from_bytes("lbr", b'B'*16, b'b'*8).as_str()
-    return PaymentActor(s_addr, StatusObject(Status.none), [])
+    return PaymentActor(s_addr, StatusObject(Status.none))
 
 
 @pytest.fixture
@@ -59,7 +59,6 @@ def payment(sender_actor, receiver_actor, payment_action):
 @pytest.fixture
 def kyc_data():
     return KYCData({
-        "payload_type": "KYC_DATA",
         "payload_version": 1,
         "type": "individual",
     })
@@ -128,8 +127,8 @@ def db(tmp_path):
 
 @pytest.fixture
 def command(payment_action):
-    sender = PaymentActor('C', StatusObject(Status.none), [])
-    receiver = PaymentActor('1', StatusObject(Status.none), [])
+    sender = PaymentActor('C', StatusObject(Status.none))
+    receiver = PaymentActor('1', StatusObject(Status.none))
     payment = PaymentObject(
         sender, receiver, 'XYZ_ABC', 'orig_ref', 'desc', payment_action
     )

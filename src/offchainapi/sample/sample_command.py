@@ -16,16 +16,8 @@ class SampleCommand(ProtocolCommand):
     def __init__(self, item):
         ProtocolCommand.__init__(self)
         command = SampleObject(item)
-        # if deps is None:
-        #     self.reads_version_map = []
-        # else:
-        #     self.reads_version_map = [(d,d) for d in deps]
-        # self.writes_version_map   = [(command.item, command.item)]
         self.command   = command
         self.always_happy = True
-
-    # def get_request_cid(self):
-    #     return self.item()
 
     def get_object(self):
         return self.command

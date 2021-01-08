@@ -90,22 +90,11 @@ class PaymentProcessor(CommandProcessor):
 
         root = storage_factory.make_dir(self.business.get_my_address())
         processor_dir = storage_factory.make_dir('processor', root=root)
-        # map from reference_id to latest version id
-        # self.reference_id_index = storage_factory.make_dict(
-        #     'reference_id_index', str, processor_dir)
 
         # This is the primary store of shared objects.
         # It maps reference id -> objects.
         self.object_store = storage_factory.make_dict(
             'object_store', PaymentObject, root=processor_dir)
-
-        # Allow mapping a set of future to payment reference_id outcomes
-        # Once a payment has an outcome (ready_for_settlement, abort, or command exception)
-        # notify the appropriate futures of the result. These do not persist
-        # crashes since they are run-time objects.
-
-        # Mapping: payment reference_id -> List of futures.
-        # self.outcome_futures = {}
 
         # Storage for debug futures list
         self.futs = []
@@ -156,7 +145,7 @@ class PaymentProcessor(CommandProcessor):
             other_address (LibraAddress):  The other VASP address in the
                 channel that received this command.
             command (PaymentCommand): The current payment command.
-            cid (int): cid of the related request.
+            cid (str): cid of the related request.
         """
         # To process commands we should have set a network
         if self.net is None:
@@ -165,9 +154,7 @@ class PaymentProcessor(CommandProcessor):
             )
 
         # Update the outcome of the payment
-        # payment = command.get_payment(self.object_store)
         payment = command.get_payment()
-        # self.set_payment_outcome(payment)
 
         # If there is no registered obligation to process there is no
         # need to process this command. We log here an error, which
@@ -193,16 +180,6 @@ class PaymentProcessor(CommandProcessor):
                     # Attempt to send it to the other VASP.
                     await self.net.send_request(other_address, request)
                 else:
-                    # Signal to anyone waiting that progress was not made
-                    # despite being our turn to make progress. As a result
-                    # some extra processing should be done until progress
-                    # can be made. Note that if the payment is already done
-                    # (as in ready_for_settlement/abort) we have set an outcome
-                    # for it, and this will be a no-op.
-                    # self.set_payment_outcome_exception(
-                    #     payment.reference_id,
-                    #     PaymentProcessorNoProgress())
-
                     is_receiver = self.business.is_recipient(new_payment)
                     role = ['sender', 'receiver'][is_receiver]
 

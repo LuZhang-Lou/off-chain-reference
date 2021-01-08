@@ -22,9 +22,9 @@ def payment_sender_init():
     action = PaymentAction(5, 'TIK', 'charge', 887355)
 
     s_addr = LibraAddress.from_bytes("lbr", b'A'*16, b'a'*8).as_str()
-    sender = PaymentActor(s_addr, StatusObject(Status.needs_kyc_data), [])
+    sender = PaymentActor(s_addr, StatusObject(Status.needs_kyc_data))
     r_addr = LibraAddress.from_bytes("lbr", b'B'*16, b'b'*8).as_str()
-    receiver = PaymentActor(r_addr, StatusObject(Status.none), [])
+    receiver = PaymentActor(r_addr, StatusObject(Status.none))
 
     ref = f'{other_addr.as_str()}_XGGXHSHHSJ'
 

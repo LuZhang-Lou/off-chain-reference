@@ -20,7 +20,7 @@ class PaymentLogicError(CommandValidationError):
 class PaymentCommand(ProtocolCommand):
     ''' Creates a new ``PaymentCommand`` based on a given payment.
 
-        The  command creates the object version of the payment given
+        The command creates the object version of the payment given
         and depends on any previous versions of the given payment.
 
         Args:
@@ -30,21 +30,16 @@ class PaymentCommand(ProtocolCommand):
     def __init__(self, payment_object):
         ProtocolCommand.__init__(self)
         ref_id = payment_object.reference_id
-
-        # FIXME : rename this to self.payment ??
-        self.command = payment_object.get_full_diff_record()
+        self.payment_dict = payment_object.get_full_diff_record()
 
     def __eq__(self, other):
         return ProtocolCommand.__eq__(self, other) \
-            and self.command == other.command
+            and self.payment_dict == other.payment_dict
 
     def get_payment(self):
         # TODO more simplification for get_full_diff_record & create_from_record
-        payment = PaymentObject.create_from_record(self.command)
+        payment = PaymentObject.create_from_record(self.payment_dict)
         return payment
-
-    def get_reference_id(self):
-        return self.get_payment().reference_id
 
     def get_json_data_dict(self, flag):
         ''' Get a data dictionary compatible with JSON serilization
@@ -60,7 +55,7 @@ class PaymentCommand(ProtocolCommand):
         '''
         data_dict = ProtocolCommand.get_json_data_dict(self, flag)
 
-        data_dict['payment'] = self.command
+        data_dict['payment'] = self.payment_dict
         return data_dict
 
     @classmethod
@@ -83,6 +78,6 @@ class PaymentCommand(ProtocolCommand):
         self = super().from_json_data_dict(data, flag)
         # Thus super() is magic, but do not worry we get the right type:
         assert isinstance(self, PaymentCommand)
-        self.command = data['payment']
+        self.payment_dict = data['payment']
 
         return self

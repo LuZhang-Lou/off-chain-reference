@@ -29,7 +29,7 @@ def business_and_processor(three_addresses, store):
 def payment_as_receiver(three_addresses, sender_actor, payment_action):
     _, _, a0 = three_addresses
     subaddr = LibraAddress.from_bytes("lbr", a0.onchain_address_bytes, b'x'*8)
-    receiver = PaymentActor(subaddr.as_str(), StatusObject(Status.none), [])
+    receiver = PaymentActor(subaddr.as_str(), StatusObject(Status.none))
     return PaymentObject(
         sender_actor, receiver, 'ref', 'orig_ref', 'desc', payment_action
     )
@@ -56,7 +56,7 @@ def settled_payment_as_receiver(kyc_payment_as_receiver):
 def payment_as_sender(three_addresses, receiver_actor, payment_action):
     _, _, a0 = three_addresses
     subaddr = LibraAddress.from_bytes("lbr", a0.onchain_address_bytes, b'x'*8)
-    sender = PaymentActor(subaddr.as_str(), StatusObject(Status.none), [])
+    sender = PaymentActor(subaddr.as_str(), StatusObject(Status.none))
     return PaymentObject(
         sender, receiver_actor, 'ref', 'orig_ref', 'desc', payment_action
     )
@@ -95,8 +95,8 @@ def json_request(my_addr, other_addr, payment_action):
     sub_sender = LibraAddress.from_bytes("lbr", my_addr.onchain_address_bytes, b'a'*8)
     sub_receiver = LibraAddress.from_bytes("lbr", other_addr.onchain_address_bytes, b'b'*8)
 
-    sender = PaymentActor(sub_sender.as_str(), StatusObject(Status.none), [])
-    receiver = PaymentActor(sub_receiver.as_str(), StatusObject(Status.none), [])
+    sender = PaymentActor(sub_sender.as_str(), StatusObject(Status.none))
+    receiver = PaymentActor(sub_receiver.as_str(), StatusObject(Status.none))
     ref = f'{other_addr.as_str()}_XYZ'
     payment = PaymentObject(
         sender, receiver, ref, 'Original Reference', 'A description...', payment_action
@@ -111,8 +111,8 @@ def receiver_SINIT_json_request(my_addr, other_addr, payment_action):
     sub_sender = LibraAddress.from_bytes("lbr", other_addr.onchain_address_bytes, b'a'*8)
     sub_receiver = LibraAddress.from_bytes("lbr", my_addr.onchain_address_bytes, b'b'*8)
 
-    sender = PaymentActor(sub_sender.as_str(), StatusObject(Status.needs_kyc_data), [])
-    receiver = PaymentActor(sub_receiver.as_str(), StatusObject(Status.none), [])
+    sender = PaymentActor(sub_sender.as_str(), StatusObject(Status.needs_kyc_data))
+    receiver = PaymentActor(sub_receiver.as_str(), StatusObject(Status.none))
     ref = f'{other_addr.as_str()}_XYZ'
     payment = PaymentObject(
         sender, receiver, ref, 'Original Reference', 'A description...', payment_action
