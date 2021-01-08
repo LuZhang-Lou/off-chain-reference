@@ -39,8 +39,7 @@ def test_payment_command_serialization_store(payment):
 def test_payment_end_to_end_serialization(payment):
     # Define a full request/reply with a Payment and test serialization
     cmd = PaymentCommand(payment)
-    request = CommandRequestObject(cmd)
-    request.cid = '10'
+    request = CommandRequestObject(cmd, "10")
     request.response = make_success_response(request)
     data = request.get_json_data_dict(JSONFlag.STORE)
     request2 = CommandRequestObject.from_json_data_dict(data, JSONFlag.STORE)

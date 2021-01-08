@@ -102,8 +102,7 @@ def test_complicated_objects(db, payment):
     cmd.uninteresting_fields = "uninteresting"
     assert cmd_dict['foo'] == cmd
 
-    request = CommandRequestObject(cmd)
-    request.cid = '10'
+    request = CommandRequestObject(cmd, "10")
 
     request_dict = StorableDict(db, 'command', CommandRequestObject)
     request_dict['foo'] = request

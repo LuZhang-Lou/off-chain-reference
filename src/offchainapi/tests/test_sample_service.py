@@ -102,8 +102,7 @@ def json_request(my_addr, other_addr, payment_action):
         sender, receiver, ref, 'Original Reference', 'A description...', payment_action
     )
     command = PaymentCommand(payment)
-    request = CommandRequestObject(command)
-    request.cid = 0
+    request = CommandRequestObject(command, "cid")
     return request.get_json_data_dict(JSONFlag.NET)
 
 
@@ -119,8 +118,7 @@ def receiver_SINIT_json_request(my_addr, other_addr, payment_action):
         sender, receiver, ref, 'Original Reference', 'A description...', payment_action
     )
     command = PaymentCommand(payment)
-    request = CommandRequestObject(command)
-    request.cid = 0
+    request = CommandRequestObject(command, "cid")
     return request.get_json_data_dict(JSONFlag.NET)
 
 

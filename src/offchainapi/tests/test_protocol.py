@@ -173,6 +173,38 @@ def test_client_server_role_definition(three_addresses, vasp):
     assert channel.is_server()
     assert not channel.is_client()
 
+def test_handle_seen_request(two_channels):
+    server, client = two_channels
+
+    # Create a server request for a command
+    request = server.sequence_command_local(SampleCommand('Hello'))
+    assert isinstance(request, CommandRequestObject)
+    assert len(server.committed_commands) == 0
+    assert len(server.my_pending_requests) == 1
+
+    # Pass the request to the client
+    len_before = len(client.processor.method_calls)
+    assert len(client.committed_commands) == 0
+    assert len(client.my_pending_requests) == 0
+    reply = client.handle_request(request)
+    assert isinstance(reply, CommandResponseObject)
+    assert len(client.committed_commands) == 1
+    assert len(client.my_pending_requests) == 0
+    assert reply.status == 'success'
+    assert client.processor.method_calls[-1][0] == 'process_command'
+    len_after = len(client.processor.method_calls)
+    assert len_before + 2 == len_after  # 2: check_command, process_command
+
+    # handle old request
+    reply = client.handle_request(request)
+    assert isinstance(reply, CommandResponseObject)
+    assert len(client.committed_commands) == 1
+    assert len(client.my_pending_requests) == 0
+    assert reply.status == 'success'
+
+    latest_len = len(client.processor.method_calls)
+    assert latest_len == len_after  # check_command, process_command are not called
+
 
 def test_protocol_server_client_benign(two_channels):
     server, client = two_channels
@@ -191,6 +223,8 @@ def test_protocol_server_client_benign(two_channels):
     assert len(client.committed_commands) == 1
     assert len(client.my_pending_requests) == 0
     assert reply.status == 'success'
+    # FIXME test committed commands
+    assert client.committed_commands[request.cid].command.item() == 'Hello'
 
     # Pass the reply back to the server
     succ = server.handle_response(reply)
@@ -198,8 +232,16 @@ def test_protocol_server_client_benign(two_channels):
     assert len(server.committed_commands) == 1
     assert len(server.my_pending_requests) == 0
 
-    assert client.committed_commands[request.cid].command.item() == 'Hello'
+    assert server.processor.method_calls[-1][0] == 'process_command'
+    len_before = len(server.processor.method_calls)
 
+    # handle old response
+    succ = server.handle_response(reply)
+    assert succ
+    assert len(server.committed_commands) == 1
+    assert len(server.my_pending_requests) == 0
+    len_after = len(server.processor.method_calls)
+    assert len_before == len_after
 
 def test_protocol_server_conflicting_sequence(two_channels):
     server, client = two_channels
@@ -324,6 +366,10 @@ def test_protocol_server_client_handled_previously_seen_messages(two_channels):
     assert client.committed_commands[server_request.cid].command.item() == 'World'
     assert server.committed_commands[server_request.cid].response is not None
     assert server.committed_commands[server_request.cid].command.item() == 'World'
+
+
+async def test_handle_old_request(two_channels):
+    server, client = two_channels
 
 
 # async def test_protocol_conflict1(two_channels):
@@ -512,9 +558,8 @@ def test_json_serlialize():
     assert cmd == cmd2
 
     # Test Request, Response
-    req0 = CommandRequestObject(cmd)
+    req0 = CommandRequestObject(cmd, "10")
     req2 = CommandRequestObject(cmd2)
-    req0.cid = '10'
     req0.status = 'success'
 
     data = req0.get_json_data_dict(JSONFlag.STORE)

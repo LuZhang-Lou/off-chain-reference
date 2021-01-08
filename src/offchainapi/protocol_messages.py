@@ -87,9 +87,11 @@ class OffChainErrorObject(JSONSerializable):
 class CommandRequestObject(JSONSerializable):
     """ Represents a command of the Off chain protocol. """
 
-    def __init__(self, command):
-        # self.cid = get_request_cid_helper(command)
-        self.cid = str(uuid4())
+    def __init__(self, command, cid = None):
+        if cid is None:
+            self.cid = str(uuid4())
+        else:
+            self.cid = cid
         self.command = command
         self.command_type = command.json_type()
 
@@ -145,8 +147,7 @@ class CommandRequestObject(JSONSerializable):
         try:
             # Use generic/dynamic parse functionality
             command = JSONSerializable.parse(data['command'], flag)
-            self = CommandRequestObject(command)
-            self.cid = str(data["cid"])
+            self = CommandRequestObject(command, str(data["cid"]))
             if flag == JSONFlag.STORE and 'response' in data:
                 self.response = CommandResponseObject.from_json_data_dict(
                     data['response'], flag

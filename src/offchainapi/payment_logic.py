@@ -95,7 +95,7 @@ class PaymentProcessor(CommandProcessor):
         #     'reference_id_index', str, processor_dir)
 
         # This is the primary store of shared objects.
-        # It maps version numbers -> objects.
+        # It maps reference id -> objects.
         self.object_store = storage_factory.make_dict(
             'object_store', PaymentObject, root=processor_dir)
 
@@ -133,11 +133,7 @@ class PaymentProcessor(CommandProcessor):
                     f' Trigger outcome.')
 
                 # try to construct a payment.
-                # payment = command.get_payment(self.object_store)
                 payment = command.get_payment()
-                # self.set_payment_outcome_exception(
-                #                 payment.reference_id,
-                #                 PaymentProcessorRemoteError(error))
             else:
                 logger.error(
                     f'Command with {other_address.as_str()}.#{cid}'
@@ -227,69 +223,6 @@ class PaymentProcessor(CommandProcessor):
                 exc_info=True,
             )
 
-    # -------- Machinery for notification for outcomes -------
-
-    # async def wait_for_payment_outcome(self, reference_id):
-    #     ''' Returns the payment object with the given a reference_id once the
-    #     object has the sender and/or receiver status set to either
-    #     'ready_for_settlement' or 'abort'.
-    #     '''
-    #     fut = self.loop.create_future()
-
-    #     if reference_id not in self.outcome_futures:
-    #         self.outcome_futures[reference_id] = []
-
-    #     # Register this future to call later.
-    #     self.outcome_futures[reference_id] += [fut]
-
-    #     # Check to see if the payment is already resolved.
-    #     if reference_id in self.reference_id_index:
-    #         payment = self.get_latest_payment_by_ref_id(reference_id)
-    #         self.set_payment_outcome(payment)
-
-    #     return (await fut)
-
-    # def set_payment_outcome(self, payment):
-    #     ''' Updates the list of futures waiting for payment outcomes
-    #         based on the new payment object provided. If sender or receiver
-    #         of the payment object are in settled or abort states, then
-    #         the result is passed on to any waiting futures.
-    #     '''
-
-    #     # Check if payment is in a final state
-    #     if not ((payment.sender.status.as_status() == Status.ready_for_settlement and \
-    #             payment.receiver.status.as_status() == Status.ready_for_settlement) or \
-    #             payment.sender.status.as_status() == Status.abort or \
-    #             payment.receiver.status.as_status() == Status.abort):
-    #         return
-
-    #     # Check if anyone is waiting for this payment.
-    #     if payment.reference_id not in self.outcome_futures:
-    #         return
-
-    #     # Get the futures waiting for an outcome, and delete them
-    #     # from the list of pending futures.
-    #     outcome_futures = self.outcome_futures[payment.reference_id]
-    #     del self.outcome_futures[payment.reference_id]
-
-    #     # Update the outcome for each of the futures.
-    #     for fut in outcome_futures:
-    #         fut.set_result(payment)
-
-    # def set_payment_outcome_exception(self, reference_id, payment_exception):
-    #     # Check if anyone is waiting for this payment.
-    #     if reference_id not in self.outcome_futures:
-    #         return
-
-    #     # Get the futures waiting for an outcome, and delete them
-    #     # from the list of pending futures.
-    #     outcome_futures = self.outcome_futures[reference_id]
-    #     del self.outcome_futures[reference_id]
-
-    #     # Update the outcome for each of the futures.
-    #     for fut in outcome_futures:
-    #         fut.set_exception(payment_exception)
-
     # -------- Implements CommandProcessor interface ---------
 
     def business_context(self):
@@ -331,7 +264,6 @@ class PaymentProcessor(CommandProcessor):
 
         # Only check the commands we get from others.
         if origin_str == other_addr_str:
-            # if command.reads_version_map == []:
             state = State.from_payment_object(new_payment)
             if state == State.SINIT:
 
@@ -349,17 +281,6 @@ class PaymentProcessor(CommandProcessor):
 
                 self.check_initial_payment(new_payment)
             else:
-                # Ensure the payment ref_id stays the same
-                # old_ref_id, _ = command.reads_version_map[0]
-                # new_ref_id, _ = command.writes_version_map[0]
-                # if old_ref_id != new_ref_id:
-                #     raise PaymentLogicError(
-                #         OffChainErrorCode.payment_wrong_structure,
-                #         f'Expected the reference id to not change,'
-                #         f' got: {old_ref_id} and {new_ref_id}'
-                #     )
-                # FIXME: let object_store only the previous object
-                # old_version = command.get_previous_version_number()
                 old_payment = self.object_store[new_payment.reference_id]
                 self.check_new_update(old_payment, new_payment)
 
@@ -379,16 +300,10 @@ class PaymentProcessor(CommandProcessor):
             return fut
 
         # If success, create and record new objects
-        # FIXME: if we just override here, do we need to reference old objects later?
-        # new_versions = command.get_new_object_versions()
-        # for version in new_versions:
-        #     obj = command.get_object(version, self.object_store)
-        #     self.object_store[version] = obj
         payment = command.get_payment()
         self.object_store[payment.reference_id] = payment
 
         # Update the Index of Reference ID -> Payment.
-        # self.ommand)
 
         # Spin further command processing in its own task.
         logger.debug(f'(other:{other_str}) Schedule cmd {cid}')
@@ -402,50 +317,8 @@ class PaymentProcessor(CommandProcessor):
 
         return fut
 
-    # -------- Get Payment API commands --------
-
-    # def get_latest_payment_by_ref_id(self, ref_id):
-    #     ''' Returns the latest payment with the reference ID provided.'''
-    #     # version = self.reference_id_index.try_get(ref_id)
-    #     # if version is None:
-    #     #     raise KeyError(ref_id)
-    #     # return self.object_store[version]
-    #     return self.object_store[ref_id]
-
-    # def get_payment_history_by_ref_id(self, ref_id):
-    #     ''' Generator that returns all versions of a
-    #         payment with a given reference ID
-    #         in reverse causal order (newest first). '''
-    #     payment = self.get_latest_payment_by_ref_id(ref_id)
-    #     yield payment
-
-    #     if payment.previous_version is not None:
-    #         p_version = payment.previous_version
-    #         payment = self.object_store[p_version]
-    #         yield payment
-
-    # def store_latest_payment_by_ref_id(self, command):
-    #     ''' Internal command to update the payment index '''
-    #     payment = command.get_payment(self.object_store)
-
-    #     # Update the Index of Reference ID -> Payment.
-    #     ref_id = payment.reference_id
-
-    #     # Write the new payment to the index of payments by
-    #     # reference ID to support they GetPaymentAPI.
-    #     payment_version = self.reference_id_index.try_get(ref_id)
-    #     if payment_version:
-    #         # We check that the previous version is present.
-    #         # If so we update it with the new one.
-    #         dependencies_versions = command.get_dependencies()
-    #         if payment_version in dependencies_versions:
-    #             self.reference_id_index[ref_id] = payment.version
-    #     else:
-    #         self.reference_id_index[ref_id] = payment.version
-
     # ----------- END of CommandProcessor interface ---------
 
-    # FIXME collapse functions
     def check_signatures(self, payment):
         ''' Utility function that checks all signatures present for validity.
 
@@ -616,7 +489,6 @@ class PaymentProcessor(CommandProcessor):
         is_sender = not is_receiver
         role = ['sender', 'receiver'][is_receiver]
 
-        # new_payment = payment.new_version(store=self.object_store)
         new_payment = payment.new_version()
 
         ctx = None
@@ -690,8 +562,6 @@ class PaymentProcessor(CommandProcessor):
                     )
 
         except BusinessForceAbort as e:
-            # new_payment = payment.new_version(new_payment.version, store=self.object_store)
-            # new_payment = payment.new_version(new_payment.version, store=self.object_store)
             new_payment.data[role].change_status(
                 StatusObject(Status.abort, "rejected", str(e))
             )
