@@ -101,8 +101,11 @@ def test_payment_actor_creation():
         # Bad metadata type
         _ = PaymentActor('XYZ', snone, 0)
 
-def test_add_metadata():
+def test_metadata():
     snone = StatusObject(Status.none)
+    actor = PaymentActor('XYZ', snone)
+    assert "metadata" not in actor
+
     actor = PaymentActor('XYZ', snone, ["abc"])
     assert actor.metadata == ["abc"]
     actor.add_metadata("def")

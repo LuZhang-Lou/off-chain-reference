@@ -118,13 +118,16 @@ class PaymentActor(StructureChecker):
         ('metadata', list, OPTIONAL, UPDATABLE)
     ]
 
-    def __init__(self, address, status, metadata=[]):
+    def __init__(self, address, status, metadata=None):
         StructureChecker.__init__(self)
         self.update({
             'address': address,
             'status': status,
-            'metadata': metadata
         })
+        if metadata is not None:
+            self.update({
+                'metadata': metadata
+            })
 
     def get_onchain_address_encoded_str(self):
         """
@@ -170,9 +173,14 @@ class PaymentActor(StructureChecker):
         Args:
             item (*): The item to add to the metadata.
         """
-        self.update({
-            'metadata': self.data['metadata'] + [item]
-        })
+        if 'metadata' in self.data:
+            self.update({
+                'metadata': self.data['metadata'] + [item]
+            })
+        else:
+            self.update({
+                'metadata': [item]
+            })
 
     def change_status(self, status):
         """ Change the payment status for this actor>
