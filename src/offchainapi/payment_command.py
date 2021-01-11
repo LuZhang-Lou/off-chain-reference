@@ -29,7 +29,6 @@ class PaymentCommand(ProtocolCommand):
 
     def __init__(self, payment_object):
         ProtocolCommand.__init__(self)
-        ref_id = payment_object.reference_id
         self.payment_dict = payment_object.get_full_diff_record()
 
     def __eq__(self, other):
@@ -54,7 +53,6 @@ class PaymentCommand(ProtocolCommand):
                 dict: A data dictionary compatible with JSON serilization.
         '''
         data_dict = ProtocolCommand.get_json_data_dict(self, flag)
-
         data_dict['payment'] = self.payment_dict
         return data_dict
 

@@ -153,12 +153,8 @@ class PaymentProcessor(CommandProcessor):
                 'Setup a processor network to process commands.'
             )
 
-        # Update the outcome of the payment
         payment = command.get_payment()
 
-        # If there is no registered obligation to process there is no
-        # need to process this command. We log here an error, which
-        # might be due to a bug.
         other_address_str = other_address.as_str()
 
         logger.info(f'(other:{other_address_str}) Process Command #{cid}')
