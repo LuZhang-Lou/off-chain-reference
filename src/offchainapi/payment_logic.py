@@ -11,13 +11,11 @@ from .status_logic import State, KYCResult, InvalidStateException
 from .asyncnet import NetworkException
 from .shared_object import SharedObject
 from .libra_address import LibraAddress, LibraAddressError
-from .utils import get_unique_string
 
 import asyncio
 import logging
 import json
-
-
+import uuid
 
 
 class PaymentProcessorNoProgress(Exception):
@@ -243,12 +241,12 @@ class PaymentProcessor(CommandProcessor):
                 # Check that the reference_id is correct
                 # Only do this for the definition of new payments, after that
                 # the ref id stays the same.
-
-                ref_id_structure = new_payment.reference_id.split('_')
-                if not (len(ref_id_structure) > 1 and ref_id_structure[0] == origin_str):
+                try:
+                    uuid.UUID(new_payment.reference_id)
+                except Exception:
                     raise PaymentLogicError(
                         OffChainErrorCode.payment_wrong_structure,
-                        f'Expected reference_id of the form {origin_str}_XYZ, got: '
+                        f'Expected reference_id to be a UUID, got: '
                         f'{new_payment.reference_id}'
                     )
 

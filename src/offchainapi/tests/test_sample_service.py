@@ -5,7 +5,7 @@ from ..sample.sample_service import sample_business, sample_vasp
 from ..payment_logic import Status, PaymentProcessor, PaymentCommand
 from ..payment import PaymentActor, PaymentObject, StatusObject
 from ..libra_address import LibraAddress
-from ..utils import JSONFlag
+from ..utils import JSONFlag, get_uuid_str
 from ..protocol_messages import CommandRequestObject, CommandResponseObject, \
     OffChainErrorObject, OffChainErrorCode
 from ..asyncnet import Aionet
@@ -113,7 +113,7 @@ def receiver_SINIT_json_request(my_addr, other_addr, payment_action):
 
     sender = PaymentActor(sub_sender.as_str(), StatusObject(Status.needs_kyc_data))
     receiver = PaymentActor(sub_receiver.as_str(), StatusObject(Status.none))
-    ref = f'{other_addr.as_str()}_XYZ'
+    ref = get_uuid_str()
     payment = PaymentObject(
         sender, receiver, ref, 'Original Reference', 'A description...', payment_action
     )
