@@ -6,7 +6,7 @@ from ..status_logic import Status, KYCResult, State
 from ..payment_command import PaymentCommand, PaymentLogicError
 from ..business import BusinessForceAbort, BusinessValidationFailure
 from os import urandom
-from ..payment import PaymentObject, StatusObject, PaymentActor, PaymentAction
+from ..payment import PaymentObject, StatusObject, PaymentActor, PaymentAction, KYCData
 from ..libra_address import LibraAddress
 from ..asyncnet import Aionet
 from ..storage import StorableFactory
@@ -73,6 +73,36 @@ def test_check_initial_payment_bad_initial_state(payment, processor):
     with pytest.raises(PaymentLogicError) as e:
         processor.check_initial_payment(payment)
     assert "Initial payment object is not in SINIT state" in e.value.error_message
+
+
+def test_check_initial_payment_sender_set_receiver_metadata(payment, processor):
+    bcm = processor.business_context()
+    bcm.is_recipient.return_value = True
+    payment.sender.change_status(StatusObject(Status.needs_kyc_data))
+    payment.receiver.change_status(StatusObject(Status.none))
+    payment.receiver.add_metadata("haha")
+    with pytest.raises(PaymentLogicError) as e:
+        processor.check_initial_payment(payment)
+    assert "Sender should not set " in e.value.error_message
+
+
+def test_check_initial_payment_sender_set_receiver_kyc(payment, processor):
+    bcm = processor.business_context()
+    bcm.is_recipient.return_value = True
+    payment.sender.change_status(StatusObject(Status.needs_kyc_data))
+    payment.receiver.change_status(StatusObject(Status.none))
+
+    full_kyc = {
+            "payload_type": "KYC_DATA",
+            "payload_version": 1,
+            "type": "individual",
+            "given_name": "Alice",
+    }
+    kyc = KYCData(full_kyc)
+    payment.receiver.add_kyc_data(kyc)
+    with pytest.raises(PaymentLogicError) as e:
+        processor.check_initial_payment(payment)
+    assert "Sender should not set " in e.value.error_message
 
 
 def test_check_initial_payment_bad_sender_actor_address(payment, processor):
@@ -597,7 +627,6 @@ def test_process_command_success_vanilla(payment, loop, db):
     # No obligation means no processing
     coro = processor.process_command_success_async(other_addr, cmd, seq=10)
     _ = loop.run_until_complete(coro)
-    print(f"@@@@@@@@@@@@@ method calls: {net.method_calls}")
 
     assert [call[0] for call in net.method_calls] == [
         'sequence_command', 'send_request']

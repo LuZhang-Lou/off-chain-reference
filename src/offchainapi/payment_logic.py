@@ -470,7 +470,18 @@ class PaymentProcessor(CommandProcessor):
                     OffChainErrorCode.payment_wrong_status,
                     f'Initial payment object is not in SINIT state, but {state}'
                 )
-
+            # check receiver's fields: kyc_data and metadata
+            # no need to check additional kyc data as it impacts state
+            receiver = payment.receiver
+            if (
+                "kyc_data" in receiver
+                or ("metadata" in receiver and len(receiver.metadata) != 0)
+            ):
+                raise PaymentLogicError(
+                    OffChainErrorCode.payment_wrong_status,
+                    'Sender should not set "kyc_data", "metadata" or '
+                    '"additional_kyc_data" for receiver in initial message'
+                )
         except InvalidStateException as e:
             raise PaymentLogicError(
                 OffChainErrorCode.payment_wrong_status,
@@ -480,8 +491,8 @@ class PaymentProcessor(CommandProcessor):
         # TODO: catch exceptions into Payment errors
 
         try:
-            send_addr = LibraAddress.from_encoded_str(payment.sender.address)
-            receiver_addr = LibraAddress.from_encoded_str(payment.receiver.address)
+            LibraAddress.from_encoded_str(payment.sender.address)
+            LibraAddress.from_encoded_str(payment.receiver.address)
         except LibraAddressError as e:
             raise PaymentLogicError(
                 OffChainErrorCode.payment_invalid_libra_address,
