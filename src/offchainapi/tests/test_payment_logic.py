@@ -11,7 +11,7 @@ from ..libra_address import LibraAddress
 from ..asyncnet import Aionet
 from ..storage import StorableFactory
 from ..payment_logic import PaymentProcessor, PaymentStateMachine
-from ..utils import JSONFlag
+from ..utils import get_uuid_str
 from ..errors import OffChainErrorCode
 
 from .basic_business_context import TestBusinessContext
@@ -25,13 +25,13 @@ import copy
 @pytest.fixture
 def sender_actor():
     addr = LibraAddress.from_bytes("lbr", b'A'*16, b'a'*8).as_str()
-    return PaymentActor(addr, StatusObject(Status.needs_kyc_data), [])
+    return PaymentActor(addr, StatusObject(Status.needs_kyc_data))
 
 
 @pytest.fixture
 def receiver_actor():
     addr = LibraAddress.from_bytes("lbr", b'B'*16, b'b'*8).as_str()
-    return PaymentActor(addr, StatusObject(Status.none), [])
+    return PaymentActor(addr, StatusObject(Status.none))
 
 
 @pytest.fixture
@@ -107,7 +107,7 @@ def test_check_initial_payment_sender_set_receiver_kyc(payment, processor):
 
 def test_check_initial_payment_bad_sender_actor_address(payment, processor):
     snone = StatusObject(Status.needs_kyc_data)
-    actor = PaymentActor('XYZ', snone, [])
+    actor = PaymentActor('XYZ', snone)
 
     bcm = processor.business_context()
     bcm.is_recipient.return_value = True
@@ -129,7 +129,7 @@ def test_check_initial_payment_allow_empty_sender_actor_subaddress(payment, proc
 
 def test_check_initial_payment_bad_receiver_actor_address(payment, processor):
     snone = StatusObject(Status.none)
-    actor = PaymentActor('XYZ', snone, [])
+    actor = PaymentActor('XYZ', snone)
 
     bcm = processor.business_context()
     bcm.is_recipient.return_value = True
@@ -263,7 +263,7 @@ def test_check_command(three_addresses, payment, processor):
         channel.get_my_address.return_value = a0
         channel.get_other_address.return_value = a1
 
-        payment.data['reference_id'] = f'{origin.as_str()}_XYZ'
+        payment.data['reference_id'] = get_uuid_str()
         command = PaymentCommand(payment)
         command.set_origin(origin)
 
@@ -277,15 +277,19 @@ def test_check_command(three_addresses, payment, processor):
                 other_address = channel.get_other_address()
                 processor.check_command(my_address, other_address, command)
 
-def test_check_command_bad_refid(three_addresses, payment, processor):
+def test_check_command_bad_refid(three_addresses, processor, sender_actor, receiver_actor, payment_action):
     a0, _, a1 = three_addresses
     channel = MagicMock(spec=VASPPairChannel)
     channel.get_my_address.return_value = a0
     channel.get_other_address.return_value = a1
     origin = a1 # Only check new commands from other side
 
-    # Wrong origin ref_ID address
-    payment.reference_id = f'{origin.as_str()[:-2]}ZZ_XYZ'
+    # Wrong origin ref_ID
+    ref_id = "none_uuid_format"
+    payment = PaymentObject(
+        sender_actor, receiver_actor, ref_id, None,
+        'Human readable payment information.', payment_action
+    )
     command = PaymentCommand(payment)
     command.set_origin(origin)
 
@@ -296,6 +300,15 @@ def test_check_command_bad_refid(three_addresses, payment, processor):
         processor.check_command(my_address, other_address, command)
     assert e.value.error_code == OffChainErrorCode.payment_wrong_structure
 
+    # right format
+    ref_id = get_uuid_str()
+    payment = PaymentObject(
+        sender_actor, receiver_actor, ref_id, None,
+        'Human readable payment information.', payment_action
+    )
+    command = PaymentCommand(payment)
+    command.set_origin(origin)
+    processor.check_command(my_address, other_address, command)
 
 def test_payment_process_SINIT_receiver_provide_kyc_and_signature(payment, processor, kyc_data, signature):
     bcm = processor.business_context()
@@ -607,7 +620,7 @@ def test_process_command_success_no_proc(payment, loop, db):
     cmd.set_origin(my_addr)
 
     # No obligation means no processing
-    coro = processor.process_command_success_async(other_addr, cmd, seq=10)
+    coro = processor.process_command_success_async(other_addr, cmd, cid="cid")
     _ = loop.run_until_complete(coro)
 
 def test_process_command_success_vanilla(payment, loop, db):
@@ -625,40 +638,45 @@ def test_process_command_success_vanilla(payment, loop, db):
     cmd.set_origin(other_addr)
 
     # No obligation means no processing
-    coro = processor.process_command_success_async(other_addr, cmd, seq=10)
+    coro = processor.process_command_success_async(other_addr, cmd, cid="cid")
     _ = loop.run_until_complete(coro)
 
     assert [call[0] for call in net.method_calls] == [
         'sequence_command', 'send_request']
 
+
 async def test_process_command_happy_path(payment, loop, db):
+    assert State.from_payment_object(payment) == State.SINIT
+
     store = StorableFactory(db)
 
-    my_addr = LibraAddress.from_bytes("lbr", b'B'*16)
-    other_addr = LibraAddress.from_bytes("lbr", b'A'*16)
+    my_addr = LibraAddress.from_bytes("lbr", b'A'*16)
+    other_addr = LibraAddress.from_bytes("lbr", b'B'*16)
     my_bcm = TestBusinessContext(my_addr)
     other_bcm = TestBusinessContext(other_addr)
     # Use the same store/DB backend
+    net = AsyncMock(Aionet)
     my_processor = PaymentProcessor(my_bcm, store, loop)
     other_processor = PaymentProcessor(other_bcm, store, loop)
-    net = AsyncMock(Aionet)
     my_processor.set_network(net)
     other_processor.set_network(net)
 
-    other_cmd = PaymentCommand(payment)
-    other_cmd.set_origin(other_addr)
-
-    # me: process success command
     assert len(my_processor.object_store) == 0
-    fut = my_processor.process_command(other_addr, other_cmd, other_cmd.get_request_cid(), True)
+    assert len(other_processor.object_store) == 0
 
+    sinit_my_cmd = PaymentCommand(payment)
+    sinit_my_cmd.set_origin(my_addr)
+
+    my_fut = my_processor.process_command(other_addr, sinit_my_cmd, "cid", True)
     assert len(my_processor.object_store) == 1
-    other_cmd_new_vers = list(other_cmd.get_new_object_versions())
-    assert len(other_cmd_new_vers) == 1
-    assert my_processor.object_store[other_cmd_new_vers[0]] == payment
+    assert my_processor.object_store[payment.reference_id] == payment
+    await my_fut
 
-    assert my_processor.get_latest_payment_by_ref_id(payment.reference_id) == payment
-    await fut
+    other_fut = other_processor.process_command(my_addr, sinit_my_cmd, "cid", True)
+    assert len(other_processor.object_store) == 1
+    assert other_processor.object_store[payment.reference_id] == payment
+
+    await other_fut
 
     # Make some differences, and test that commands are isolated per VASPs
     payment2 = copy.deepcopy(payment)
@@ -669,18 +687,11 @@ async def test_process_command_happy_path(payment, loop, db):
     my_cmd = PaymentCommand(payment2)
     my_cmd.set_origin(my_addr)
     # other: process success command
-    assert len(other_processor.object_store) == 0
-    fut = other_processor.process_command(other_addr, my_cmd, my_cmd.get_request_cid(), True)
-
     assert len(other_processor.object_store) == 1
-    my_cmd_new_vers = list(my_cmd.get_new_object_versions())
-    assert len(my_cmd_new_vers) == 1
+    fut = other_processor.process_command(other_addr, my_cmd, "cid", True)
+    assert other_processor.object_store[payment.reference_id] == payment2
 
     # Even though payment and payment2 have the same version id and share
     # the db backend, they can distinguish the payments
-    assert other_processor.object_store[my_cmd_new_vers[0]] == payment2
-    assert my_processor.object_store[other_cmd_new_vers[0]] != payment2
-    assert my_processor.object_store[other_cmd_new_vers[0]] == payment
-
-    assert other_processor.get_latest_payment_by_ref_id(payment2.reference_id) == payment2
+    assert other_processor.object_store[payment.reference_id] != my_processor.object_store[payment.reference_id]
     await fut

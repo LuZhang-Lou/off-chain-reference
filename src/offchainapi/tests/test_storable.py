@@ -99,13 +99,10 @@ def test_complicated_objects(db, payment):
     cmd_dict['foo'] = cmd
     assert cmd_dict['foo'] == cmd
 
-    cmd.writes_version_map = [('xxxxxxxx', 'xxxxxxxx')]
-    assert cmd_dict['foo'] != cmd
-    cmd_dict['foo'] = cmd
+    cmd.uninteresting_fields = "uninteresting"
     assert cmd_dict['foo'] == cmd
 
-    request = CommandRequestObject(cmd)
-    request.cid = '10'
+    request = CommandRequestObject(cmd, "10")
 
     request_dict = StorableDict(db, 'command', CommandRequestObject)
     request_dict['foo'] = request

@@ -3,7 +3,6 @@
 
 from .business import BusinessNotAuthorized
 from .libra_address import LibraAddress
-from .utils import get_unique_string
 
 import aiohttp, os
 from aiohttp import web
@@ -220,7 +219,7 @@ class Aionet:
         logger.debug(f'Sending post request to {url}')
 
         # Add a custom request header
-        request_headers = {X_REQUEST_ID_KEY: get_unique_string()}
+        request_headers = {X_REQUEST_ID_KEY: get_uuid_str()}
 
         try:
             async with self.session.post(

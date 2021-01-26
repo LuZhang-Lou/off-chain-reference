@@ -8,6 +8,7 @@ from .shared_object import SharedObject
 from .status_logic import Status
 from .libra_address import LibraAddress
 import typing
+from copy import deepcopy
 
 import json
 
@@ -20,7 +21,6 @@ class KYCData(StructureChecker):
     """
 
     fields = [
-        ("payload_type", str, REQUIRED, WRITE_ONCE),
         ("payload_version", int, REQUIRED, WRITE_ONCE),
         ("type", str, REQUIRED, WRITE_ONCE),
         ("given_name", str, OPTIONAL, WRITE_ONCE),
@@ -115,16 +115,19 @@ class PaymentActor(StructureChecker):
         ('kyc_data', KYCData, OPTIONAL, WRITE_ONCE),
         ('additional_kyc_data', str, OPTIONAL, WRITE_ONCE),
         ('status', StatusObject, REQUIRED, UPDATABLE),
-        ('metadata', list, REQUIRED, UPDATABLE)
+        ('metadata', list, OPTIONAL, UPDATABLE)
     ]
 
-    def __init__(self, address, status, metadata):
+    def __init__(self, address, status, metadata=None):
         StructureChecker.__init__(self)
         self.update({
             'address': address,
             'status': status,
-            'metadata': metadata
         })
+        if metadata is not None:
+            self.update({
+                'metadata': metadata
+            })
 
     def get_onchain_address_encoded_str(self):
         """
@@ -170,9 +173,14 @@ class PaymentActor(StructureChecker):
         Args:
             item (*): The item to add to the metadata.
         """
-        self.update({
-            'metadata': self.data['metadata'] + [item]
-        })
+        if 'metadata' in self.data:
+            self.update({
+                'metadata': self.data['metadata'] + [item]
+            })
+        else:
+            self.update({
+                'metadata': [item]
+            })
 
     def change_status(self, status):
         """ Change the payment status for this actor>
@@ -205,7 +213,7 @@ class PaymentAction(StructureChecker):
             amount (int): The amount of the payment.
             currency (str): The currency of the payment.
             action (str): The action of the payment; eg. a refund.
-            timestamp (str): The timestamp of the payment.
+            timestamp (int): unixtime
         """
         StructureChecker.__init__(self)
         self.update({
@@ -285,9 +293,9 @@ class PaymentObject(SharedObject, StructureChecker, JSONSerializable):
         SharedObject.__init__(self)
         return self
 
-    def new_version(self, new_version=None, store=None):
-        """ Override SharedObject. """
-        clone = SharedObject.new_version(self, new_version, store)
+    def new_version(self):
+        # TODO optmize from reading in db?
+        clone = deepcopy(self)
         clone.flatten()
         return clone
 

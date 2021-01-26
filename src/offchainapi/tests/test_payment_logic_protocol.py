@@ -7,6 +7,7 @@ from ..libra_address import LibraAddress
 from ..payment_logic import PaymentProcessor, PaymentCommand
 from ..payment import PaymentAction, PaymentActor, PaymentObject, StatusObject
 from ..status_logic import Status
+from ..utils import get_uuid_str
 
 from .basic_business_context import TestBusinessContext
 
@@ -22,11 +23,11 @@ def payment_sender_init():
     action = PaymentAction(5, 'TIK', 'charge', 887355)
 
     s_addr = LibraAddress.from_bytes("lbr", b'A'*16, b'a'*8).as_str()
-    sender = PaymentActor(s_addr, StatusObject(Status.needs_kyc_data), [])
+    sender = PaymentActor(s_addr, StatusObject(Status.needs_kyc_data))
     r_addr = LibraAddress.from_bytes("lbr", b'B'*16, b'b'*8).as_str()
-    receiver = PaymentActor(r_addr, StatusObject(Status.none), [])
+    receiver = PaymentActor(r_addr, StatusObject(Status.none))
 
-    ref = f'{other_addr.as_str()}_XGGXHSHHSJ'
+    ref = get_uuid_str()
 
     payment = PaymentObject(sender, receiver, ref, None, None, action)
     return payment
@@ -66,7 +67,7 @@ def test_logic_protocol_process_start(payment_sender_init, loop, db):
     cmd = PaymentCommand(payment_sender_init)
     cmd.set_origin(other_addr)
 
-    processor.process_command(other_addr, cmd, cid=0, status_success=True)
+    processor.process_command(other_addr, cmd, cid="cid", status_success=True)
 
     # Ensure an obligration is scheduled
     assert len(asyncio.all_tasks(loop)) == 1

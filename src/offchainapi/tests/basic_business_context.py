@@ -74,7 +74,6 @@ class TestBusinessContext(BusinessContext):
         ''' Returns the extended KYC information for this payment.
         '''
         return KYCData({
-                    "payload_type": "KYC_DATA",
                     "payload_version": 1,
                     "type": "individual",
                 })
@@ -83,7 +82,6 @@ class TestBusinessContext(BusinessContext):
         ''' Returns the extended KYC information for this payment.
         '''
         return KYCData({
-                    "payload_type": "KYC_DATA",
                     "payload_version": 1,
                     "type": "individual",
                     "given_name": "John",

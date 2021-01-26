@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from enum import Enum
-from os import urandom
+from uuid import uuid4
 import json
 
 REQUIRED = True
@@ -278,6 +278,5 @@ class JSONSerializable:
 
 
 # Utilities
-def get_unique_string():
-    ''' Returns a strong random 16 byte string encoded in hex. '''
-    return urandom(16).hex()
+def get_uuid_str():
+    return str(uuid4())

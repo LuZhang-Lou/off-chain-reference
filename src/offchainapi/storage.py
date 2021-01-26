@@ -5,7 +5,7 @@
 from hashlib import sha256
 import json
 
-from .utils import JSONFlag, JSONSerializable, get_unique_string
+from .utils import JSONFlag, JSONSerializable
 from .database import Database
 
 

@@ -24,9 +24,9 @@ import copy
 @pytest.fixture
 def payment():
     sender_addr = LibraAddress.from_bytes("lbr", b'B'*16, b'b'*8)
-    sender =  PaymentActor(sender_addr.as_str(), StatusObject(Status.none), [])
+    sender =  PaymentActor(sender_addr.as_str(), StatusObject(Status.none))
     receiver_addr = LibraAddress.from_bytes("lbr", b'A'*16, b'a'*8)
-    receiver =  PaymentActor(receiver_addr.as_str(), StatusObject(Status.none), [])
+    receiver =  PaymentActor(receiver_addr.as_str(), StatusObject(Status.none))
     action = PaymentAction(5, 'TIK', 'charge', 7784993)
     ref_id = f'{LibraAddress.from_encoded_str(sender_addr.get_onchain_encoded_str())}_{urandom(16).hex()}'
     return PaymentObject(
