@@ -11,7 +11,7 @@ from ..libra_address import LibraAddress
 from ..asyncnet import Aionet
 from ..storage import StorableFactory
 from ..payment_logic import PaymentProcessor, PaymentStateMachine
-from ..utils import JSONFlag
+from ..utils import get_uuid_str
 from ..errors import OffChainErrorCode
 
 from .basic_business_context import TestBusinessContext
@@ -233,7 +233,7 @@ def test_check_command(three_addresses, payment, processor):
         channel.get_my_address.return_value = a0
         channel.get_other_address.return_value = a1
 
-        payment.data['reference_id'] = f'{origin.as_str()}_XYZ'
+        payment.data['reference_id'] = get_uuid_str()
         command = PaymentCommand(payment)
         command.set_origin(origin)
 
@@ -247,15 +247,19 @@ def test_check_command(three_addresses, payment, processor):
                 other_address = channel.get_other_address()
                 processor.check_command(my_address, other_address, command)
 
-def test_check_command_bad_refid(three_addresses, payment, processor):
+def test_check_command_bad_refid(three_addresses, processor, sender_actor, receiver_actor, payment_action):
     a0, _, a1 = three_addresses
     channel = MagicMock(spec=VASPPairChannel)
     channel.get_my_address.return_value = a0
     channel.get_other_address.return_value = a1
     origin = a1 # Only check new commands from other side
 
-    # Wrong origin ref_ID address
-    payment.reference_id = f'{origin.as_str()[:-2]}ZZ_XYZ'
+    # Wrong origin ref_ID
+    ref_id = "none_uuid_format"
+    payment = PaymentObject(
+        sender_actor, receiver_actor, ref_id, None,
+        'Human readable payment information.', payment_action
+    )
     command = PaymentCommand(payment)
     command.set_origin(origin)
 
@@ -266,6 +270,15 @@ def test_check_command_bad_refid(three_addresses, payment, processor):
         processor.check_command(my_address, other_address, command)
     assert e.value.error_code == OffChainErrorCode.payment_wrong_structure
 
+    # right format
+    ref_id = get_uuid_str()
+    payment = PaymentObject(
+        sender_actor, receiver_actor, ref_id, None,
+        'Human readable payment information.', payment_action
+    )
+    command = PaymentCommand(payment)
+    command.set_origin(origin)
+    processor.check_command(my_address, other_address, command)
 
 def test_payment_process_SINIT_receiver_provide_kyc_and_signature(payment, processor, kyc_data, signature):
     bcm = processor.business_context()

@@ -4,7 +4,6 @@
 # from ..asyncnet import Aionet
 # from ..protocol_messages import OffChainException
 # from ..business import BusinessNotAuthorized
-# from ..utils import get_unique_string
 
 # import pytest
 # import aiohttp

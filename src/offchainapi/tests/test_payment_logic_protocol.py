@@ -7,6 +7,7 @@ from ..libra_address import LibraAddress
 from ..payment_logic import PaymentProcessor, PaymentCommand
 from ..payment import PaymentAction, PaymentActor, PaymentObject, StatusObject
 from ..status_logic import Status
+from ..utils import get_uuid_str
 
 from .basic_business_context import TestBusinessContext
 
@@ -26,7 +27,7 @@ def payment_sender_init():
     r_addr = LibraAddress.from_bytes("lbr", b'B'*16, b'b'*8).as_str()
     receiver = PaymentActor(r_addr, StatusObject(Status.none))
 
-    ref = f'{other_addr.as_str()}_XGGXHSHHSJ'
+    ref = get_uuid_str()
 
     payment = PaymentObject(sender, receiver, ref, None, None, action)
     return payment
