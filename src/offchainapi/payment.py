@@ -7,6 +7,8 @@ from .utils import StructureException, StructureChecker, \
 from .shared_object import SharedObject
 from .status_logic import Status
 from .libra_address import LibraAddress
+import typing
+from copy import deepcopy
 
 import json
 
@@ -19,7 +21,6 @@ class KYCData(StructureChecker):
     """
 
     fields = [
-        ("payload_type", str, REQUIRED, WRITE_ONCE),
         ("payload_version", int, REQUIRED, WRITE_ONCE),
         ("type", str, REQUIRED, WRITE_ONCE),
         ("given_name", str, OPTIONAL, WRITE_ONCE),
@@ -29,7 +30,6 @@ class KYCData(StructureChecker):
         ("place_of_birth", dict, OPTIONAL, WRITE_ONCE),
         ("national_id", dict, OPTIONAL, WRITE_ONCE),
         ("legal_entity_name", str, OPTIONAL, WRITE_ONCE),
-        ("other", dict, OPTIONAL, WRITE_ONCE),
     ]
 
     def __init__(self, kyc_dict):
@@ -113,18 +113,21 @@ class PaymentActor(StructureChecker):
     fields = [
         ('address', str, REQUIRED, WRITE_ONCE),
         ('kyc_data', KYCData, OPTIONAL, WRITE_ONCE),
-        ('additional_kyc_data', KYCData, OPTIONAL, WRITE_ONCE),
+        ('additional_kyc_data', str, OPTIONAL, WRITE_ONCE),
         ('status', StatusObject, REQUIRED, UPDATABLE),
-        ('metadata', list, REQUIRED, UPDATABLE)
+        ('metadata', list, OPTIONAL, UPDATABLE)
     ]
 
-    def __init__(self, address, status, metadata):
+    def __init__(self, address, status, metadata=None):
         StructureChecker.__init__(self)
         self.update({
             'address': address,
             'status': status,
-            'metadata': metadata
         })
+        if metadata is not None:
+            self.update({
+                'metadata': metadata
+            })
 
     def get_onchain_address_encoded_str(self):
         """
@@ -154,11 +157,11 @@ class PaymentActor(StructureChecker):
             'kyc_data': kyc_data,
         })
 
-    def add_additional_kyc_data(self, additional_kyc_data):
+    def add_additional_kyc_data(self, additional_kyc_data: str):
         """ Add extended KYC information and kyc signature.
 
         Args:
-            kyc_data (str): The KYC data object
+            additional_kyc_data (str): Freeform KYC data.
         """
         self.update({
             'additional_kyc_data': additional_kyc_data,
@@ -170,9 +173,14 @@ class PaymentActor(StructureChecker):
         Args:
             item (*): The item to add to the metadata.
         """
-        self.update({
-            'metadata': self.data['metadata'] + [item]
-        })
+        if 'metadata' in self.data:
+            self.update({
+                'metadata': self.data['metadata'] + [item]
+            })
+        else:
+            self.update({
+                'metadata': [item]
+            })
 
     def change_status(self, status):
         """ Change the payment status for this actor>
@@ -183,6 +191,11 @@ class PaymentActor(StructureChecker):
         self.update({
             'status': status
         })
+
+    def get_additional_kyc_data(self) -> typing.Optional[str]:
+        if "additional_kyc_data" in self.data:
+            return self.additional_kyc_data
+        return None
 
 
 class PaymentAction(StructureChecker):
@@ -200,7 +213,7 @@ class PaymentAction(StructureChecker):
             amount (int): The amount of the payment.
             currency (str): The currency of the payment.
             action (str): The action of the payment; eg. a refund.
-            timestamp (str): The timestamp of the payment.
+            timestamp (int): unixtime
         """
         StructureChecker.__init__(self)
         self.update({
@@ -266,7 +279,6 @@ class PaymentObject(SharedObject, StructureChecker, JSONSerializable):
 
         self.update(main_state)
 
-
     @classmethod
     def create_from_record(cls, diff):
         """ Create a apyment object from a diff.
@@ -281,9 +293,9 @@ class PaymentObject(SharedObject, StructureChecker, JSONSerializable):
         SharedObject.__init__(self)
         return self
 
-    def new_version(self, new_version=None, store=None):
-        """ Override SharedObject. """
-        clone = SharedObject.new_version(self, new_version, store)
+    def new_version(self):
+        # TODO optmize from reading in db?
+        clone = deepcopy(self)
         clone.flatten()
         return clone
 
@@ -317,3 +329,8 @@ class PaymentObject(SharedObject, StructureChecker, JSONSerializable):
 
     def __str__(self):
         return json.dumps(self.get_json_data_dict(JSONFlag.STORE), indent=4)
+
+    def get_recipient_signature(self) -> typing.Optional[str]:
+        if "recipient_signature" in self.data:
+            return self.recipient_signature
+        return None

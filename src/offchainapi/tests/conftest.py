@@ -33,13 +33,13 @@ def three_addresses():
 @pytest.fixture
 def sender_actor():
     s_addr = LibraAddress.from_bytes("lbr", b'A'*16, b'a'*8).as_str()
-    return PaymentActor(s_addr, StatusObject(Status.none), [])
+    return PaymentActor(s_addr, StatusObject(Status.none))
 
 
 @pytest.fixture
 def receiver_actor():
     s_addr = LibraAddress.from_bytes("lbr", b'B'*16, b'b'*8).as_str()
-    return PaymentActor(s_addr, StatusObject(Status.none), [])
+    return PaymentActor(s_addr, StatusObject(Status.none))
 
 
 @pytest.fixture
@@ -59,10 +59,18 @@ def payment(sender_actor, receiver_actor, payment_action):
 @pytest.fixture
 def kyc_data():
     return KYCData({
-        "payload_type": "KYC_DATA",
         "payload_version": 1,
         "type": "individual",
     })
+
+@pytest.fixture
+def signature():
+    return "VALID"
+
+
+@pytest.fixture
+def additional_kyc_data():
+    return "additional_kyc_data"
 
 
 @pytest.fixture
@@ -119,8 +127,8 @@ def db(tmp_path):
 
 @pytest.fixture
 def command(payment_action):
-    sender = PaymentActor('C', StatusObject(Status.none), [])
-    receiver = PaymentActor('1', StatusObject(Status.none), [])
+    sender = PaymentActor('C', StatusObject(Status.none))
+    receiver = PaymentActor('1', StatusObject(Status.none))
     payment = PaymentObject(
         sender, receiver, 'XYZ_ABC', 'orig_ref', 'desc', payment_action
     )
@@ -129,8 +137,7 @@ def command(payment_action):
 
 @pytest.fixture
 def json_request(command):
-    request = CommandRequestObject(command)
-    request.cid = '85ef57011938e47ca7c9622661336f00'
+    request = CommandRequestObject(command, "85ef57011938e47ca7c9622661336f00")
     return request.get_json_data_dict(JSONFlag.NET)
 
 

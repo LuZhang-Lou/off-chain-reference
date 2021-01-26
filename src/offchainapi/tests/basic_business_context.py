@@ -3,7 +3,7 @@
 
 from ..business import BusinessContext, BusinessValidationFailure
 from ..payment import KYCData
-from ..status_logic import Status
+from ..status_logic import Status, KYCResult
 
 
 class TestBusinessContext(BusinessContext):
@@ -29,7 +29,8 @@ class TestBusinessContext(BusinessContext):
                 'testing error handling')
             raise e
 
-
+    async def evaluate_kyc(self, payment, ctx=None):
+        return KYCResult.PASS
 
     def open_channel_to(self, other_vasp_info):
         return True
@@ -69,50 +70,10 @@ class TestBusinessContext(BusinessContext):
 
 # ----- KYC/Compliance checks -----
 
-    async def next_kyc_to_provide(self, payment, ctx=None):
-        role = ['receiver', 'sender'][self.is_sender(payment)]
-        other_role = ['sender', 'receiver'][self.is_sender(payment)]
-        own_actor = payment.data[role]
-        other_actor = payment.data[other_role]
-        kyc_data = set()
-
-        if 'kyc_data' not in own_actor:
-            kyc_data.add(Status.needs_kyc_data)
-
-        if 'additional_kyc_data' not in own_actor \
-                and other_actor.status.as_status() == Status.soft_match:
-            kyc_data.add(Status.soft_match)
-
-        if role == 'receiver':
-            if 'recipient_signature' not in payment:
-                kyc_data.add(Status.needs_recipient_signature)
-
-        return kyc_data
-
-    async def next_kyc_level_to_request(self, payment, ctx=None):
-        other_role = ['sender', 'receiver'][self.is_sender(payment)]
-        other_actor = payment.data[other_role]
-
-        if 'kyc_data' not in other_actor:
-            return Status.needs_kyc_data
-
-        if self.reliable_count % 3 == 0:
-            if 'additional_kyc_data' not in other_actor:
-                return Status.soft_match
-
-        if other_role == 'receiver' \
-                and 'recipient_signature' not in payment:
-            return Status.needs_recipient_signature
-
-        ctx['settle'] = True
-        return Status.none
-
-
     async def get_extended_kyc(self, payment, ctx=None):
         ''' Returns the extended KYC information for this payment.
         '''
         return KYCData({
-                    "payload_type": "KYC_DATA",
                     "payload_version": 1,
                     "type": "individual",
                 })
@@ -121,7 +82,6 @@ class TestBusinessContext(BusinessContext):
         ''' Returns the extended KYC information for this payment.
         '''
         return KYCData({
-                    "payload_type": "KYC_DATA",
                     "payload_version": 1,
                     "type": "individual",
                     "given_name": "John",
@@ -129,10 +89,7 @@ class TestBusinessContext(BusinessContext):
                     "dob": "1973-07-08"
                 })
 
-    # ----- Settlement -----
-
-    async def ready_for_settlement(self, payment, ctx=None):
-        if not self.reliable:
-            self.cause_error()
-
-        return ctx['settle']
+    async def sender_ready_to_settle(self, payment, ctx):
+        if "recipient_signature" not in payment.data:
+            return (False, "recipient signature is not present")
+        return (True, "")

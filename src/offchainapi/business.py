@@ -6,6 +6,7 @@
 # ---------------------------------------------------------------------------
 
 from .errors import OffChainErrorCode
+from .status_logic import KYCResult
 
 # A model for VASP business environment
 
@@ -69,12 +70,11 @@ class BusinessContext:
         """
         raise NotImplementedError()  # pragma: no cover
 
-    def is_recipient(self, payment, ctx=None):
+    def is_recipient(self, payment):
         """ Returns true if the VASP is the recipient of a payment.
 
         Args:
             payment (PaymentCommand): The concerned payment.
-            ctx (Any): Optional context object that business can store custom data
 
         Returns:
             bool: Whether the VASP is the recipient of the payment.
@@ -125,47 +125,8 @@ class BusinessContext:
 
 # ----- KYC/Compliance checks -----
 
-    async def next_kyc_to_provide(self, payment, ctx=None):
-        ''' Returns the level of kyc to provide to the other VASP based on its
-            status. Can provide more if deemed necessary or less.
 
-            Args:
-                payment (PaymentCommand): The concerned payment.
-                ctx (Any): Optional context object that business can store custom data
-
-            Returns:
-                Status: A set of status indicating to level of kyc to provide,
-                that can include:
-                    - `status_logic.Status.needs_kyc_data`
-                    - `status_logic.Status.needs_recipient_signature`
-
-            An empty set indicates no KYC should be provided at this moment.
-
-            Raises:
-                BusinessForceAbort : To abort the payment.
-        '''
-        raise NotImplementedError()  # pragma: no cover
-
-    async def next_kyc_level_to_request(self, payment, ctx=None):
-        ''' Returns the next level of KYC to request from the other VASP. Must
-            not request a level that is either already requested or provided.
-
-            Args:
-                payment (PaymentCommand): The concerned payment.
-                ctx (Any): Optional context object that business can store custom data
-
-            Returns:
-                Status: Returns Status.none or the current status
-                if no new information is required, otherwise a status
-                code from:
-                    - `status_logic.Status.needs_kyc_data`
-                    - `status_logic.Status.needs_recipient_signature`
-                    - `status_logic.soft_match`
-                    - `status_logic.pending_review`
-
-            Raises:
-                BusinessForceAbort : To abort the payment.
-        '''
+    async def evaluate_kyc(self, payment, ctx=None) -> KYCResult:
         raise NotImplementedError()  # pragma: no cover
 
 
@@ -228,47 +189,35 @@ class BusinessContext:
         '''
         pass
 
-    async def payment_initial_processing(self, payment, ctx=None):
-        '''
-        Allow business to do custom pre-processing to a payment
-        Args:
-            payment (PaymentObject): The concerned payment.
-            ctx (Any): Optional context object that business can store custom data
-        Raises:
-            BusinessForceAbort: When business wants to abort a payment
-        '''
+    async def generate_payment_context(self, payment):
+        """ Generate and return related payment context """
         pass
 
-    async def ready_for_settlement(self, payment, ctx=None):
-        ''' Indicates whether a payment is ready for settlement as far as this
-            VASP is concerned. Once it returns True it must never return False.
 
-            In particular it **must** check that:
-                - Accounts exist and have the funds necessary.
-                - Sender of funds intends to perform the payment (VASPs can
-                  initiate payments from an account on the other VASP.)
-                - KYC information provided **on both sides** is correct and to
-                  the VASPs satisfaction. On payment creation a VASP may suggest
-                  KYC information on both sides.
+    async def check_travel_rule_requirement(self, payment, ctx) -> None:
+        """
+        Check if Travel Rule is required for this payment
+        Raise BusinessForceAbort if not, and the payment will be aborted
+        """
+        pass
 
-            If all the above are true, then return `True`.
-            If any of the above are untrue throw an BusinessForceAbort.
-            If any more KYC is necessary then return `False`.
+    async def sender_ready_to_settle(self, payment, ctx=None):
+        """
+        called on RSEND or RSOFTSEND by sender.
+        Return Tuple[bool, str], a tuple of whether to settle and reason to abort
+        (only when the first element is False). When the first element
+        is True, we settle the payment, False to abort it and populate
+        the abort reason
+        """
+        pass
 
-            This acts as the finality barrier and last check for this VASP.
-            After this call returns True this VASP can no more abort the
-            payment (unless the other VASP aborts it).
+    async def payment_post_processing(self, payment, ctx=None):
+        """
+        called at the end of command processing. note that at this point
+        the command is not fully committed yet (by the other side)
+        """
+        pass
 
-            Args:
-                payment (PaymentCommand): The concerned payment.
-
-            Raises:
-                BusinessForceAbort: If any of the above condutions are untrue.
-
-            Returns:
-                bool: Whether the VASP is ready to settle the payment.
-            '''
-        raise NotImplementedError()  # pragma: no cover
 
 class VASPInfo:
     """Contains information about VASPs"""

@@ -2,16 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from ..protocol import VASPPairChannel
-from ..status_logic import Status, STATUS_HEIGHTS
+from ..status_logic import Status, KYCResult, State
 from ..payment_command import PaymentCommand, PaymentLogicError
 from ..business import BusinessForceAbort, BusinessValidationFailure
-
-from ..payment import PaymentObject, StatusObject, PaymentActor
+from os import urandom
+from ..payment import PaymentObject, StatusObject, PaymentActor, PaymentAction, KYCData
 from ..libra_address import LibraAddress
 from ..asyncnet import Aionet
 from ..storage import StorableFactory
-from ..payment_logic import PaymentProcessor
-from ..utils import JSONFlag
+from ..payment_logic import PaymentProcessor, PaymentStateMachine
+from ..utils import get_uuid_str
 from ..errors import OffChainErrorCode
 
 from .basic_business_context import TestBusinessContext
@@ -22,123 +22,208 @@ import pytest
 import copy
 
 
-def test_check_new_payment_from_recipient(payment, processor):
+@pytest.fixture
+def sender_actor():
+    addr = LibraAddress.from_bytes("lbr", b'A'*16, b'a'*8).as_str()
+    return PaymentActor(addr, StatusObject(Status.needs_kyc_data))
+
+
+@pytest.fixture
+def receiver_actor():
+    addr = LibraAddress.from_bytes("lbr", b'B'*16, b'b'*8).as_str()
+    return PaymentActor(addr, StatusObject(Status.none))
+
+
+@pytest.fixture
+def payment_action():
+    return PaymentAction(5, 'TIK', 'charge', 7784993)
+
+
+@pytest.fixture
+def payment(sender_actor, receiver_actor, payment_action):
+    ref_id = f'{LibraAddress.from_encoded_str(sender_actor.address).get_onchain_encoded_str()}_{urandom(16).hex()}'
+    return PaymentObject(
+        sender_actor, receiver_actor, ref_id, None,
+        'Human readable payment information.', payment_action
+    )
+
+def test_check_initial_payment_from_receiver(payment, processor):
     bcm = processor.business_context()
-    bcm.is_recipient.side_effect = [True] * 4
-    processor.check_new_payment(payment)
+    bcm.is_recipient.return_value = True
+    payment.sender.change_status(StatusObject(Status.needs_kyc_data))
+    payment.receiver.change_status(StatusObject(Status.none))
+    processor.check_initial_payment(payment)
 
 
-def test_check_new_payment_from_sender(payment, processor):
+def test_check_initial_payment_bad_state(payment, processor):
     bcm = processor.business_context()
-    bcm.is_recipient.side_effect = [False] * 4
-    processor.check_new_payment(payment)
-
-
-def test_check_new_payment_sender_set_receiver_state_fail(payment, processor):
-    bcm = processor.business_context()
-    bcm.is_recipient.side_effect = [True]
-    payment.receiver.update({'status': StatusObject(Status.ready_for_settlement)})
+    bcm.is_recipient.return_value = True
+    payment.sender.change_status(StatusObject(Status.abort, "", ""))
+    payment.receiver.change_status(StatusObject(Status.abort, "", ""))
     with pytest.raises(PaymentLogicError) as e:
-        processor.check_new_payment(payment)
-    assert e.value.error_code == OffChainErrorCode.payment_wrong_status
+        processor.check_initial_payment(payment)
+    assert "Invalid state in payment" in e.value.error_message
 
 
-def test_check_new_payment_receiver_set_sender_state_fail(payment, processor):
+def test_check_initial_payment_bad_initial_state(payment, processor):
     bcm = processor.business_context()
-    bcm.is_recipient.side_effect = [False] * 4
-    payment.sender.update({'status': StatusObject(Status.ready_for_settlement)})
-    with pytest.raises(PaymentLogicError):
-        processor.check_new_payment(payment)
+    bcm.is_recipient.return_value = True
+    payment.sender.change_status(StatusObject(Status.ready_for_settlement))
+    payment.receiver.change_status(StatusObject(Status.ready_for_settlement))
+    with pytest.raises(PaymentLogicError) as e:
+        processor.check_initial_payment(payment)
+    assert "Initial payment object is not in SINIT state" in e.value.error_message
 
-def test_check_signatures_bad_fail(payment, processor):
+
+def test_check_initial_payment_sender_set_receiver_metadata(payment, processor):
     bcm = processor.business_context()
-    bcm.is_recipient.side_effect = [False] * 4
-    payment.add_recipient_signature('BAD SINGNATURE')
-    bcm.validate_recipient_signature.side_effect = [
-        BusinessValidationFailure('Sig fails'),
-        BusinessValidationFailure('Sig fails')
-    ]
-    with pytest.raises(BusinessValidationFailure):
-        processor.check_signatures(payment)
+    bcm.is_recipient.return_value = True
+    payment.sender.change_status(StatusObject(Status.needs_kyc_data))
+    payment.receiver.change_status(StatusObject(Status.none))
+    payment.receiver.add_metadata("haha")
+    with pytest.raises(PaymentLogicError) as e:
+        processor.check_initial_payment(payment)
+    assert "Sender should not set " in e.value.error_message
 
-    with pytest.raises(PaymentLogicError):
-        processor.check_new_payment(payment)
 
-def test_bad_sender_actor_address(payment, processor):
-    snone = StatusObject(Status.none)
-    actor = PaymentActor('XYZ', snone, [])
+def test_check_initial_payment_sender_set_receiver_kyc(payment, processor):
+    bcm = processor.business_context()
+    bcm.is_recipient.return_value = True
+    payment.sender.change_status(StatusObject(Status.needs_kyc_data))
+    payment.receiver.change_status(StatusObject(Status.none))
+
+    full_kyc = {
+            "payload_type": "KYC_DATA",
+            "payload_version": 1,
+            "type": "individual",
+            "given_name": "Alice",
+    }
+    kyc = KYCData(full_kyc)
+    payment.receiver.add_kyc_data(kyc)
+    with pytest.raises(PaymentLogicError) as e:
+        processor.check_initial_payment(payment)
+    assert "Sender should not set " in e.value.error_message
+
+
+def test_check_initial_payment_bad_sender_actor_address(payment, processor):
+    snone = StatusObject(Status.needs_kyc_data)
+    actor = PaymentActor('XYZ', snone)
 
     bcm = processor.business_context()
-    bcm.is_recipient.side_effect = [False] * 4
+    bcm.is_recipient.return_value = True
 
     payment.sender = actor
     with pytest.raises(PaymentLogicError) as e:
-        processor.check_new_payment(payment)
+        processor.check_initial_payment(payment)
     assert e.value.error_code == OffChainErrorCode.payment_invalid_libra_address
 
-def test_empty_sender_actor_subaddress(payment, processor):
+def test_check_initial_payment_allow_empty_sender_actor_subaddress(payment, processor):
     bcm = processor.business_context()
-    bcm.is_recipient.side_effect = [False] * 4
+    bcm.is_recipient.return_value = True
 
     addr = LibraAddress.from_encoded_str(payment.sender.address)
     addr2 = LibraAddress.from_bytes("lbr", addr.onchain_address_bytes, None)
     payment.sender.address = addr2.as_str()
 
-    processor.check_new_payment(payment)
+    processor.check_initial_payment(payment)
 
-def test_bad_receiver_actor_address(payment, processor):
+def test_check_initial_payment_bad_receiver_actor_address(payment, processor):
     snone = StatusObject(Status.none)
-    actor = PaymentActor('XYZ', snone, [])
+    actor = PaymentActor('XYZ', snone)
 
     bcm = processor.business_context()
-    bcm.is_recipient.side_effect = [False] * 4
+    bcm.is_recipient.return_value = True
 
     payment.receiver = actor
     with pytest.raises(PaymentLogicError) as e:
-        processor.check_new_payment(payment)
+        processor.check_initial_payment(payment)
     assert e.value.error_code == OffChainErrorCode.payment_invalid_libra_address
 
-def test_empty_receiver_actor_subaddress(payment, processor):
+def test_check_initial_payment_allow_empty_actor_subaddress(payment, processor):
     bcm = processor.business_context()
-    bcm.is_recipient.side_effect = [False] * 4
+    bcm.is_recipient.return_value = True
 
     addr = LibraAddress.from_encoded_str(payment.sender.address)
     addr2 = LibraAddress.from_bytes("lbr", addr.onchain_address_bytes, None)
     payment.receiver.address = addr2.as_str()
 
-    processor.check_new_payment(payment)
+    processor.check_initial_payment(payment)
 
-def test_payment_update_from_sender(payment, processor):
+def test_check_new_update(payment, processor):
     bcm = processor.business_context()
-    bcm.is_recipient.side_effect = [False] * 4
+    bcm.is_recipient.return_value = False
+    payment.sender.change_status(StatusObject(Status.needs_kyc_data))
+    payment.receiver.change_status(StatusObject(Status.none))
+    new_payment = payment.new_version()
+    new_payment.sender.change_status(StatusObject(Status.needs_kyc_data))
+    new_payment.receiver.change_status(StatusObject(Status.ready_for_settlement))
+    new_payment.add_recipient_signature("VALID")
+    processor.check_new_update(payment, new_payment)
+
+def test_check_new_update_no_signature(payment, processor):
+    bcm = processor.business_context()
+    bcm.is_recipient.return_value = False
+    payment.sender.change_status(StatusObject(Status.needs_kyc_data))
+    payment.receiver.change_status(StatusObject(Status.none))
+    new_payment = payment.new_version()
+    new_payment.sender.change_status(StatusObject(Status.needs_kyc_data))
+    new_payment.receiver.change_status(StatusObject(Status.ready_for_settlement))
+    with pytest.raises(PaymentLogicError) as e:
+        processor.check_new_update(payment, new_payment)
+    assert "Recipient signature is not included in " in e.value.error_message
+
+
+def test_check_new_update_empty_payment_update_fail(payment, processor):
+    bcm = processor.business_context()
+    bcm.is_recipient.return_value = False
     diff = {}
-    new_obj = payment.new_version()
-    new_obj = PaymentObject.from_full_record(diff, base_instance=new_obj)
-    processor.check_new_update(payment, new_obj)
+    new_payment = payment.new_version()
+    new_payment = PaymentObject.from_full_record(diff, base_instance=new_payment)
+    # Can't transition to the same state
+    with pytest.raises(PaymentLogicError):
+        processor.check_new_update(payment, new_payment)
+
+
+def test_check_new_update_bad_signature(payment, processor):
+    bcm = processor.business_context()
+    bcm.is_recipient.return_value = False
+    bcm.validate_recipient_signature.side_effect = [BusinessValidationFailure('Bad signature')]
+    # payment is SINIT
+
+    # new_payment is RSEND
+    new_payment = payment.new_version()
+    new_payment.add_recipient_signature("XXX_BAD_SIGN")
+    new_payment.receiver.change_status(StatusObject(Status.ready_for_settlement))
+
+    with pytest.raises(PaymentLogicError) as e:
+        processor.check_new_update(payment, new_payment)
+    assert "signature" in e.value.error_message
+
+def test_check_new_update_invalid_state(payment, processor):
+    bcm = processor.business_context()
+    # payment is RSOFT
+    payment.sender.change_status(StatusObject(Status.needs_kyc_data))
+    payment.receiver.change_status(StatusObject(Status.soft_match))
+
+    new_payment = payment.new_version()
+    # SABORT
+    new_payment.sender.change_status(StatusObject(Status.abort, "", ""))
+    new_payment.receiver.change_status(StatusObject(Status.soft_match))
+    with pytest.raises(PaymentLogicError) as e:
+        processor.check_new_update(payment, new_payment)
+    assert "Invalid state in payment" in e.value.error_message
 
 
 def test_check_new_update_sender_modify_receiver_state_fail(payment, processor):
     bcm = processor.business_context()
-    bcm.is_recipient.side_effect = [True]*5
+    bcm.is_recipient.return_value = True
     diff = {'receiver': {'status': { 'status': "ready_for_settlement"}}}
-    new_obj = payment.new_version()
-    new_obj = PaymentObject.from_full_record(diff, base_instance=new_obj)
-    assert new_obj.receiver.data['status'] != payment.receiver.data['status']
-    with pytest.raises(PaymentLogicError):
-        processor.check_new_update(payment, new_obj)
-
-def test_check_new_update_bad_signature(payment, processor):
-    bcm = processor.business_context()
-    bcm.is_recipient.side_effect = [False] * 5
-    bcm.validate_recipient_signature.side_effect = [
-        BusinessValidationFailure('Bad signature') ]
-
-    diff = {'recipient_signature': 'XXX_BAD_SIGN'}
-    new_obj = payment.new_version()
-    new_obj = PaymentObject.from_full_record(diff, base_instance=new_obj)
-
-    with pytest.raises(PaymentLogicError):
-        processor.check_new_update(payment, new_obj)
+    new_payment = payment.new_version()
+    new_payment = PaymentObject.from_full_record(diff, base_instance=new_payment)
+    assert new_payment.receiver.data['status'] != payment.receiver.data['status']
+    with pytest.raises(PaymentLogicError) as e:
+        processor.check_new_update(payment, new_payment)
+    assert "Cannot change" in e.value.error_message
 
 
 def test_check_new_update_receiver_modify_sender_state_fail(payment, processor):
@@ -148,8 +233,9 @@ def test_check_new_update_receiver_modify_sender_state_fail(payment, processor):
     new_obj = payment.new_version()
     new_obj = PaymentObject.from_full_record(diff, base_instance=new_obj)
     assert new_obj.sender.data['status'] != payment.sender.data['status']
-    with pytest.raises(PaymentLogicError):
+    with pytest.raises(PaymentLogicError) as e:
         processor.check_new_update(payment, new_obj)
+    assert "Cannot change" in e.value.error_message
 
 
 def test_check_command(three_addresses, payment, processor):
@@ -177,7 +263,7 @@ def test_check_command(three_addresses, payment, processor):
         channel.get_my_address.return_value = a0
         channel.get_other_address.return_value = a1
 
-        payment.data['reference_id'] = f'{origin.as_str()}_XYZ'
+        payment.data['reference_id'] = get_uuid_str()
         command = PaymentCommand(payment)
         command.set_origin(origin)
 
@@ -191,15 +277,19 @@ def test_check_command(three_addresses, payment, processor):
                 other_address = channel.get_other_address()
                 processor.check_command(my_address, other_address, command)
 
-def test_check_command_bad_refid(three_addresses, payment, processor):
+def test_check_command_bad_refid(three_addresses, processor, sender_actor, receiver_actor, payment_action):
     a0, _, a1 = three_addresses
     channel = MagicMock(spec=VASPPairChannel)
     channel.get_my_address.return_value = a0
     channel.get_other_address.return_value = a1
     origin = a1 # Only check new commands from other side
 
-    # Wrong origin ref_ID address
-    payment.reference_id = f'{origin.as_str()[:-2]}ZZ_XYZ'
+    # Wrong origin ref_ID
+    ref_id = "none_uuid_format"
+    payment = PaymentObject(
+        sender_actor, receiver_actor, ref_id, None,
+        'Human readable payment information.', payment_action
+    )
     command = PaymentCommand(payment)
     command.set_origin(origin)
 
@@ -210,73 +300,309 @@ def test_check_command_bad_refid(three_addresses, payment, processor):
         processor.check_command(my_address, other_address, command)
     assert e.value.error_code == OffChainErrorCode.payment_wrong_structure
 
+    # right format
+    ref_id = get_uuid_str()
+    payment = PaymentObject(
+        sender_actor, receiver_actor, ref_id, None,
+        'Human readable payment information.', payment_action
+    )
+    command = PaymentCommand(payment)
+    command.set_origin(origin)
+    processor.check_command(my_address, other_address, command)
 
-def test_payment_process_receiver_new_payment(payment, processor):
-    bcm = processor.business_context()
-    bcm.is_recipient.side_effect = [True, True]
-    bcm.check_account_existence.side_effect = [None]
-    bcm.next_kyc_level_to_request.side_effect = [Status.needs_kyc_data]
-    bcm.next_kyc_to_provide.side_effect = [{Status.none}]
-    bcm.ready_for_settlement.side_effect = [False]
-    assert payment.receiver.status.as_status() == Status.none
-    new_payment = processor.payment_process(payment)
-    assert new_payment.receiver.status.as_status() == Status.needs_kyc_data
-
-    bcm.is_recipient.side_effect = [True, True]
-    bcm.check_account_existence.side_effect = [None]
-    bcm.next_kyc_level_to_request.side_effect = [Status.none]
-    bcm.next_kyc_to_provide.side_effect = [{Status.none}]
-    bcm.ready_for_settlement.side_effect = [ True ]
-    new_payment2 = processor.payment_process(new_payment)
-    assert new_payment2.receiver.status.as_status() == Status.ready_for_settlement
-
-    bcm.is_recipient.side_effect = [True, True]
-    bcm.check_account_existence.side_effect = [None]
-    bcm.next_kyc_level_to_request.side_effect = [Status.none]
-    bcm.next_kyc_to_provide.side_effect = [{Status.none}]
-    bcm.ready_for_settlement.side_effect = [ True ]
-    new_payment3 = processor.payment_process(new_payment2)
-    assert new_payment3.receiver.status.as_status() == Status.ready_for_settlement
-
-
-def test_payment_process_abort_from_receiver(payment, processor):
-    bcm = processor.business_context()
-    bcm.is_recipient.side_effect = [True, True]
-    bcm.check_account_existence.side_effect = [None]
-    bcm.next_kyc_level_to_request.side_effect = [ BusinessForceAbort(OffChainErrorCode.payment_insufficient_funds, 'Not enough money in account.') ]
-    new_payment = processor.payment_process(payment)
-    assert new_payment.receiver.status.as_status() == Status.abort
-
-
-def test_payment_process_abort_from_sender(payment, processor):
+def test_payment_process_SINIT_receiver_provide_kyc_and_signature(payment, processor, kyc_data, signature):
     bcm = processor.business_context()
     bcm.is_recipient.side_effect = [True]
-    bcm.ready_for_settlement.side_effect = [False]
-    payment.sender.status = StatusObject(Status.abort, 'code', 'msg')
-    new_payment = processor.payment_process(payment)
-    assert new_payment.receiver.status.as_status() == Status.abort
-
-def test_payment_process_abort_from_business(payment, processor):
-    bcm = processor.business_context()
-    bcm.is_recipient.side_effect = [True]
-    bcm.ready_for_settlement.side_effect = [
-        BusinessForceAbort(OffChainErrorCode.payment_vasp_error, 'MESSAGE')
-
-     ]
-    new_payment = processor.payment_process(payment)
-    assert payment.receiver.status.as_status() != Status.abort
-    assert new_payment.receiver.status.as_status() == Status.abort
-    assert new_payment.receiver.status.abort_code == OffChainErrorCode.payment_vasp_error.value
-    assert new_payment.receiver.status.abort_message == 'MESSAGE'
-
-def test_payment_process_get_extended_kyc(payment, processor, kyc_data):
-    bcm = processor.business_context()
-    bcm.is_recipient.side_effect = [True]
-    bcm.next_kyc_to_provide.side_effect = [set([Status.needs_kyc_data])]
     bcm.get_extended_kyc.side_effect = [kyc_data]
-    bcm.ready_for_settlement.side_effect = [Status.ready_for_settlement]
+    bcm.get_recipient_signature.side_effect = [signature]
+    bcm.evaluate_kyc.side_effect = [KYCResult.PASS]
+
+    payment.sender.change_status(StatusObject(Status.needs_kyc_data))
+    payment.receiver.change_status(StatusObject(Status.none))
+    assert State.from_payment_object(payment), State.SINIT
+
     new_payment = processor.payment_process(payment)
     assert new_payment.receiver.kyc_data == kyc_data
+    assert new_payment.recipient_signature == signature
+    assert State.from_payment_object(new_payment), State.RSEND
+
+def test_payment_process_SINIT_receiver_soft_match(payment, processor, kyc_data, signature):
+    bcm = processor.business_context()
+    bcm.is_recipient.side_effect = [True]
+    bcm.get_extended_kyc.side_effect = [kyc_data]
+    bcm.get_recipient_signature.side_effect = [signature]
+    bcm.evaluate_kyc.side_effect = [KYCResult.SOFT_MATCH]
+
+    payment.sender.change_status(StatusObject(Status.needs_kyc_data))
+    payment.receiver.change_status(StatusObject(Status.none))
+    assert State.from_payment_object(payment), State.SINIT
+
+    new_payment = processor.payment_process(payment)
+    assert "kyc_data" not in new_payment.receiver.data
+    assert new_payment.get_recipient_signature() is None
+    assert State.from_payment_object(new_payment), State.RSOFT
+
+def test_payment_process_SINIT_receiver_abort(payment, processor, kyc_data, signature):
+    bcm = processor.business_context()
+    bcm.is_recipient.side_effect = [True]
+    bcm.get_extended_kyc.side_effect = [kyc_data]
+    bcm.get_recipient_signature.side_effect = [signature]
+    bcm.evaluate_kyc.side_effect = [KYCResult.FAIL]
+
+    payment.sender.change_status(StatusObject(Status.needs_kyc_data))
+    payment.receiver.change_status(StatusObject(Status.none))
+    assert State.from_payment_object(payment), State.SINIT
+
+    new_payment = processor.payment_process(payment)
+    assert "kyc_data" not in new_payment.receiver.data
+    assert new_payment.get_recipient_signature() is None
+    assert State.from_payment_object(new_payment), State.RABORT
+
+def test_payment_process_RSEND_sender_ready(payment, processor, kyc_data, signature):
+    payment.sender.change_status(StatusObject(Status.needs_kyc_data))
+    payment.receiver.change_status(StatusObject(Status.ready_for_settlement))
+    payment.recipient_signature = signature
+    assert State.from_payment_object(payment), State.RSEND
+
+    bcm = processor.business_context()
+    bcm.is_recipient.side_effect = [False]
+    bcm.evaluate_kyc.side_effect = [KYCResult.PASS]
+    bcm.sender_ready_to_settle.side_effect = [(True, "")]
+
+    new_payment = processor.payment_process(payment)
+    assert State.from_payment_object(new_payment), State.READY
+
+def test_payment_process_RSEND_sender_not_ready_and_abort(payment, processor, kyc_data, signature):
+    payment.sender.change_status(StatusObject(Status.needs_kyc_data))
+    payment.receiver.change_status(StatusObject(Status.ready_for_settlement))
+    assert State.from_payment_object(payment), State.RSEND
+
+    bcm = processor.business_context()
+    bcm.is_recipient.side_effect = [False]
+    bcm.evaluate_kyc.side_effect = [KYCResult.PASS]
+    bcm.sender_ready_to_settle.side_effect = [(False, "no signture provided")]
+
+    new_payment = processor.payment_process(payment)
+    assert State.from_payment_object(new_payment), State.SABORT
+
+def test_payment_process_RSEND_sender_softmatch(payment, processor, kyc_data, signature):
+    payment.sender.change_status(StatusObject(Status.needs_kyc_data))
+    payment.receiver.change_status(StatusObject(Status.ready_for_settlement))
+    assert State.from_payment_object(payment), State.RSEND
+
+    bcm = processor.business_context()
+    bcm.is_recipient.side_effect = [False]
+    bcm.evaluate_kyc.side_effect = [KYCResult.SOFT_MATCH]
+
+    new_payment = processor.payment_process(payment)
+    assert State.from_payment_object(new_payment), State.SSOFT
+
+def test_payment_process_RSEND_sender_abort(payment, processor, kyc_data, signature):
+    payment.sender.change_status(StatusObject(Status.needs_kyc_data))
+    payment.receiver.change_status(StatusObject(Status.ready_for_settlement))
+    assert State.from_payment_object(payment), State.RSEND
+
+    bcm = processor.business_context()
+    bcm.is_recipient.side_effect = [False]
+    bcm.evaluate_kyc.side_effect = [KYCResult.FAIL]
+
+    new_payment = processor.payment_process(payment)
+    assert State.from_payment_object(new_payment), State.SABORT
+
+def test_payment_process_RSOFT_sender_provide_additioal_kyc_data(payment, processor, kyc_data, signature, additional_kyc_data):
+    payment.sender.change_status(StatusObject(Status.needs_kyc_data))
+    payment.receiver.change_status(StatusObject(Status.soft_match))
+    assert State.from_payment_object(payment), State.RSOFT
+
+    bcm = processor.business_context()
+    bcm.is_recipient.side_effect = [False]
+    bcm.get_additional_kyc.side_effect = additional_kyc_data
+
+    new_payment = processor.payment_process(payment)
+    assert State.from_payment_object(new_payment), State.SSOFTSEND
+
+def test_payment_process_SSOFTSEND_receiver_provide_kyc_and_signature(payment, processor, kyc_data, signature, additional_kyc_data):
+    payment.sender.change_status(StatusObject(Status.needs_kyc_data))
+    payment.sender.add_additional_kyc_data(additional_kyc_data)
+    payment.receiver.change_status(StatusObject(Status.soft_match))
+    assert State.from_payment_object(payment), State.SSOFTSEND
+
+    bcm = processor.business_context()
+    bcm.is_recipient.side_effect = [True]
+    bcm.get_extended_kyc.side_effect = [kyc_data]
+    bcm.get_recipient_signature.side_effect = [signature]
+    bcm.evaluate_kyc.side_effect = [KYCResult.PASS]
+
+    new_payment = processor.payment_process(payment)
+    assert State.from_payment_object(new_payment), State.RSEND
+
+def test_payment_process_SSOFTSEND_receiver_abort(payment, processor, kyc_data, signature, additional_kyc_data):
+    payment.sender.change_status(StatusObject(Status.needs_kyc_data))
+    payment.sender.add_additional_kyc_data(additional_kyc_data)
+    payment.receiver.change_status(StatusObject(Status.soft_match))
+    assert State.from_payment_object(payment), State.SSOFTSEND
+
+    bcm = processor.business_context()
+    bcm.is_recipient.side_effect = [True]
+    bcm.evaluate_kyc.side_effect = [KYCResult.FAIL]
+
+    new_payment = processor.payment_process(payment)
+    assert State.from_payment_object(new_payment), State.RABORT
+
+def test_payment_process_SSOFTSEND_receiver_abort_on_second_softmatch(payment, processor, kyc_data, signature, additional_kyc_data):
+    payment.sender.change_status(StatusObject(Status.needs_kyc_data))
+    payment.sender.add_additional_kyc_data(additional_kyc_data)
+    payment.receiver.change_status(StatusObject(Status.soft_match))
+    assert State.from_payment_object(payment), State.SSOFTSEND
+
+    bcm = processor.business_context()
+    bcm.is_recipient.side_effect = [True]
+    bcm.evaluate_kyc.side_effect = [KYCResult.SOFT_MATCH]
+
+    new_payment = processor.payment_process(payment)
+    assert State.from_payment_object(new_payment), State.RABORT
+
+def test_payment_process_SSOFT_receiver_provide_additional_kyc_data_without_RSOFT(payment, processor, kyc_data, signature, additional_kyc_data):
+    payment.sender.change_status(StatusObject(Status.soft_match))
+    payment.receiver.change_status(StatusObject(Status.ready_for_settlement))
+    assert State.from_payment_object(payment), State.SSOFT
+
+    bcm = processor.business_context()
+    bcm.is_recipient.side_effect = [True]
+    bcm.get_additional_kyc.side_effect = additional_kyc_data
+
+    new_payment = processor.payment_process(payment)
+    assert State.from_payment_object(new_payment), State.RSOFTSEND
+
+
+def test_payment_process_SSOFT_receiver_provide_additional_kyc_data_after_RSOFT(payment, processor, kyc_data, signature, additional_kyc_data):
+    payment.sender.change_status(StatusObject(Status.soft_match))
+    payment.sender.add_additional_kyc_data(additional_kyc_data)
+    payment.receiver.change_status(StatusObject(Status.ready_for_settlement))
+    assert State.from_payment_object(payment), State.SSOFT
+
+    bcm = processor.business_context()
+    bcm.is_recipient.side_effect = [True]
+    bcm.get_additional_kyc.side_effect = additional_kyc_data
+
+    new_payment = processor.payment_process(payment)
+    assert State.from_payment_object(new_payment), State.RSOFTSEND
+
+
+def test_payment_process_RSOFTSEND_sender_ready_without_RSOFT(payment, processor, kyc_data, signature, additional_kyc_data):
+    payment.sender.change_status(StatusObject(Status.soft_match))
+    payment.receiver.change_status(StatusObject(Status.ready_for_settlement))
+    payment.receiver.add_additional_kyc_data(additional_kyc_data)
+    assert State.from_payment_object(payment), State.SSOFT
+
+    bcm = processor.business_context()
+    bcm.is_recipient.side_effect = [False]
+    bcm.evaluate_kyc.side_effect = [KYCResult.PASS]
+    bcm.sender_ready_to_settle.side_effect = [(True, "")]
+
+    new_payment = processor.payment_process(payment)
+    assert State.from_payment_object(new_payment), State.RSOFTSEND
+
+def test_payment_process_RSOFTSEND_sender_ready_after_RSOFT(payment, processor, kyc_data, signature, additional_kyc_data):
+    payment.sender.change_status(StatusObject(Status.soft_match))
+    payment.sender.add_additional_kyc_data(additional_kyc_data)
+    payment.receiver.change_status(StatusObject(Status.ready_for_settlement))
+    payment.receiver.add_additional_kyc_data(additional_kyc_data)
+    assert State.from_payment_object(payment), State.SSOFT
+
+    bcm = processor.business_context()
+    bcm.is_recipient.side_effect = [False]
+    bcm.evaluate_kyc.side_effect = [KYCResult.PASS]
+    bcm.sender_ready_to_settle.side_effect = [(True, "")]
+
+    new_payment = processor.payment_process(payment)
+    assert State.from_payment_object(new_payment), State.RSOFTSEND
+
+
+def test_payment_process_RSOFTSEND_sender_abort_due_to_no_siganture(payment, processor, kyc_data, signature, additional_kyc_data):
+    payment.sender.change_status(StatusObject(Status.soft_match))
+    payment.receiver.change_status(StatusObject(Status.ready_for_settlement))
+    payment.receiver.add_additional_kyc_data(additional_kyc_data)
+    assert State.from_payment_object(payment), State.SSOFT
+
+    bcm = processor.business_context()
+    bcm.is_recipient.side_effect = [False]
+    bcm.evaluate_kyc.side_effect = [KYCResult.PASS]
+    bcm.sender_ready_to_settle.side_effect = [(False, "no signture provided")]
+
+    new_payment = processor.payment_process(payment)
+    assert State.from_payment_object(new_payment), State.SABORT
+
+def test_payment_process_RSOFTSEND_sender_abort_after_second_softmatch(payment, processor, kyc_data, signature, additional_kyc_data):
+    payment.sender.change_status(StatusObject(Status.soft_match))
+    payment.receiver.change_status(StatusObject(Status.ready_for_settlement))
+    payment.receiver.add_additional_kyc_data(additional_kyc_data)
+    assert State.from_payment_object(payment), State.SSOFT
+
+    bcm = processor.business_context()
+    bcm.is_recipient.side_effect = [False]
+    bcm.get_recipient_signature.side_effect = [signature]
+    bcm.evaluate_kyc.side_effect = [KYCResult.SOFT_MATCH]
+
+    new_payment = processor.payment_process(payment)
+    assert State.from_payment_object(new_payment), State.SABORT
+
+
+def test_payment_process_RSOFTSEND_sender_abort(payment, processor, kyc_data, signature, additional_kyc_data):
+    payment.sender.change_status(StatusObject(Status.soft_match))
+    payment.receiver.change_status(StatusObject(Status.ready_for_settlement))
+    payment.receiver.add_additional_kyc_data(additional_kyc_data)
+    assert State.from_payment_object(payment), State.SSOFT
+
+    bcm = processor.business_context()
+    bcm.is_recipient.side_effect = [False]
+    bcm.get_recipient_signature.side_effect = [signature]
+    bcm.evaluate_kyc.side_effect = [KYCResult.FAIL]
+
+    new_payment = processor.payment_process(payment)
+    assert State.from_payment_object(new_payment), State.SABORT
+
+
+def test_payment_process_READY(payment, processor, kyc_data, signature, additional_kyc_data):
+    payment.sender.change_status(StatusObject(Status.ready_for_settlement))
+    payment.receiver.change_status(StatusObject(Status.ready_for_settlement))
+    assert State.from_payment_object(payment), State.READY
+
+    bcm = processor.business_context()
+    bcm.is_recipient.side_effect = [False]
+    new_payment = processor.payment_process(payment)
+
+    assert State.from_payment_object(new_payment), State.READY
+    assert not new_payment.has_changed()
+
+
+def test_payment_process_RABORT(payment, processor, kyc_data, signature, additional_kyc_data):
+    payment.sender.change_status(StatusObject(Status.needs_kyc_data))
+    payment.receiver.change_status(StatusObject(Status.abort, "", ""))
+    assert State.from_payment_object(payment), State.RABORT
+
+    bcm = processor.business_context()
+    bcm.is_recipient.side_effect = [False]
+
+    new_payment = processor.payment_process(payment)
+
+    assert State.from_payment_object(new_payment), State.RABORT
+    assert not new_payment.has_changed()
+
+
+def test_payment_process_SABORT(payment, processor, kyc_data, signature, additional_kyc_data):
+    payment.sender.change_status(StatusObject(Status.abort, "", ""))
+    payment.receiver.change_status(StatusObject(Status.ready_for_settlement))
+
+    assert State.from_payment_object(payment), State.SABORT
+
+    bcm = processor.business_context()
+    bcm.is_recipient.side_effect = [False]
+
+    new_payment = processor.payment_process(payment)
+
+    assert State.from_payment_object(new_payment), State.SABORT
+    assert not new_payment.has_changed()
 
 
 def test_process_command_success_no_proc(payment, loop, db):
@@ -294,7 +620,7 @@ def test_process_command_success_no_proc(payment, loop, db):
     cmd.set_origin(my_addr)
 
     # No obligation means no processing
-    coro = processor.process_command_success_async(other_addr, cmd, seq=10)
+    coro = processor.process_command_success_async(other_addr, cmd, cid="cid")
     _ = loop.run_until_complete(coro)
 
 def test_process_command_success_vanilla(payment, loop, db):
@@ -312,40 +638,45 @@ def test_process_command_success_vanilla(payment, loop, db):
     cmd.set_origin(other_addr)
 
     # No obligation means no processing
-    coro = processor.process_command_success_async(other_addr, cmd, seq=10)
+    coro = processor.process_command_success_async(other_addr, cmd, cid="cid")
     _ = loop.run_until_complete(coro)
 
     assert [call[0] for call in net.method_calls] == [
         'sequence_command', 'send_request']
 
+
 async def test_process_command_happy_path(payment, loop, db):
+    assert State.from_payment_object(payment) == State.SINIT
+
     store = StorableFactory(db)
 
-    my_addr = LibraAddress.from_bytes("lbr", b'B'*16)
-    other_addr = LibraAddress.from_bytes("lbr", b'A'*16)
+    my_addr = LibraAddress.from_bytes("lbr", b'A'*16)
+    other_addr = LibraAddress.from_bytes("lbr", b'B'*16)
     my_bcm = TestBusinessContext(my_addr)
     other_bcm = TestBusinessContext(other_addr)
     # Use the same store/DB backend
+    net = AsyncMock(Aionet)
     my_processor = PaymentProcessor(my_bcm, store, loop)
     other_processor = PaymentProcessor(other_bcm, store, loop)
-    net = AsyncMock(Aionet)
     my_processor.set_network(net)
     other_processor.set_network(net)
 
-    other_cmd = PaymentCommand(payment)
-    other_cmd.set_origin(other_addr)
-
-    # me: process success command
     assert len(my_processor.object_store) == 0
-    fut = my_processor.process_command(other_addr, other_cmd, other_cmd.get_request_cid(), True)
+    assert len(other_processor.object_store) == 0
 
+    sinit_my_cmd = PaymentCommand(payment)
+    sinit_my_cmd.set_origin(my_addr)
+
+    my_fut = my_processor.process_command(other_addr, sinit_my_cmd, "cid", True)
     assert len(my_processor.object_store) == 1
-    other_cmd_new_vers = list(other_cmd.get_new_object_versions())
-    assert len(other_cmd_new_vers) == 1
-    assert my_processor.object_store[other_cmd_new_vers[0]] == payment
+    assert my_processor.object_store[payment.reference_id] == payment
+    await my_fut
 
-    assert my_processor.get_latest_payment_by_ref_id(payment.reference_id) == payment
-    await fut
+    other_fut = other_processor.process_command(my_addr, sinit_my_cmd, "cid", True)
+    assert len(other_processor.object_store) == 1
+    assert other_processor.object_store[payment.reference_id] == payment
+
+    await other_fut
 
     # Make some differences, and test that commands are isolated per VASPs
     payment2 = copy.deepcopy(payment)
@@ -356,102 +687,11 @@ async def test_process_command_happy_path(payment, loop, db):
     my_cmd = PaymentCommand(payment2)
     my_cmd.set_origin(my_addr)
     # other: process success command
-    assert len(other_processor.object_store) == 0
-    fut = other_processor.process_command(other_addr, my_cmd, my_cmd.get_request_cid(), True)
-
     assert len(other_processor.object_store) == 1
-    my_cmd_new_vers = list(my_cmd.get_new_object_versions())
-    assert len(my_cmd_new_vers) == 1
+    fut = other_processor.process_command(other_addr, my_cmd, "cid", True)
+    assert other_processor.object_store[payment.reference_id] == payment2
 
     # Even though payment and payment2 have the same version id and share
     # the db backend, they can distinguish the payments
-    assert other_processor.object_store[my_cmd_new_vers[0]] == payment2
-    assert my_processor.object_store[other_cmd_new_vers[0]] != payment2
-    assert my_processor.object_store[other_cmd_new_vers[0]] == payment
-
-    assert other_processor.get_latest_payment_by_ref_id(payment2.reference_id) == payment2
+    assert other_processor.object_store[payment.reference_id] != my_processor.object_store[payment.reference_id]
     await fut
-
-def reset_payment_status(payment):
-    payment.sender.status = StatusObject(Status.none)
-    payment.receiver.status = StatusObject(Status.none)
-
-def update_role_status(payment, role, status):
-    if status == Status.abort:
-        payment.data[role].status = StatusObject(status, "", "")
-    else:
-        payment.data[role].status = StatusObject(status)
-
-def test_can_change_status(payment, loop, db):
-    """ Test invalid status change are rejected """
-    store = StorableFactory(db)
-    my_addr = LibraAddress.from_bytes("lbr", b'B'*16)
-    other_addr = LibraAddress.from_bytes("lbr", b'A'*16)
-    bcm = TestBusinessContext(my_addr)
-    processor = PaymentProcessor(bcm, store, loop)
-
-    # 1: if one side is aborted, it should never switch to other status
-    # sender action
-    update_role_status(payment, "sender", Status.abort)
-    assert processor.can_change_status(payment, Status.abort, actor_is_sender=True)
-    assert not processor.can_change_status(payment, Status.ready_for_settlement, actor_is_sender=True)
-    reset_payment_status(payment)
-
-    # receiver action
-    update_role_status(payment, "receiver", Status.abort)
-    assert processor.can_change_status(payment, Status.abort, actor_is_sender=False)
-    assert not processor.can_change_status(payment, Status.ready_for_settlement, actor_is_sender=False)
-    reset_payment_status(payment)
-
-    # 2: if one side aborts, the other side cannot transit to status other than abort
-    # sender action
-    update_role_status(payment, "receiver", Status.abort)
-    assert processor.can_change_status(payment, Status.abort, actor_is_sender=True)
-    assert not processor.can_change_status(payment, Status.ready_for_settlement, actor_is_sender=True)
-    reset_payment_status(payment)
-
-    # receiver action
-    update_role_status(payment, "sender", Status.abort)
-    assert processor.can_change_status(payment, Status.abort, actor_is_sender=False)
-    assert not processor.can_change_status(payment, Status.ready_for_settlement, actor_is_sender=False)
-    reset_payment_status(payment)
-
-    # 3: if one side is ready_for_settlement, it can only switch to abort
-    # when the other side turns to abort
-    # sender action
-    update_role_status(payment, "sender", Status.ready_for_settlement)
-    update_role_status(payment, "receiver", Status.needs_kyc_data)
-    assert not processor.can_change_status(payment, Status.abort, actor_is_sender=True)
-    assert not processor.can_change_status(payment, Status.soft_match, actor_is_sender=True)
-    reset_payment_status(payment)
-
-    # receiver action
-    update_role_status(payment, "sender", Status.needs_kyc_data)
-    update_role_status(payment, "receiver", Status.ready_for_settlement)
-    assert not processor.can_change_status(payment, Status.abort, actor_is_sender=False)
-    assert not processor.can_change_status(payment, Status.needs_recipient_signature, actor_is_sender=False)
-    reset_payment_status(payment)
-
-    # 4: if both sides are ready_for_settlement, neither side can change status
-    update_role_status(payment, "sender", Status.ready_for_settlement)
-    update_role_status(payment, "receiver", Status.ready_for_settlement)
-    assert not processor.can_change_status(payment, Status.abort, actor_is_sender=True)
-    assert not processor.can_change_status(payment, Status.abort, actor_is_sender=False)
-    reset_payment_status(payment)
-
-    # 5: one side cannot change to lower status
-    # sender action
-    for old_status in Status:
-        update_role_status(payment, "sender", old_status)
-        for new_status in Status:
-            if STATUS_HEIGHTS[new_status] < STATUS_HEIGHTS[old_status]:
-                assert not processor.can_change_status(payment, new_status, actor_is_sender=True)
-
-    reset_payment_status(payment)
-
-    # receiver action
-    for old_status in Status:
-        update_role_status(payment, "receiver", old_status)
-        for new_status in Status:
-            if STATUS_HEIGHTS[new_status] < STATUS_HEIGHTS[old_status]:
-                assert not processor.can_change_status(payment, new_status, actor_is_sender=False)

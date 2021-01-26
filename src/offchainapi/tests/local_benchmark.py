@@ -109,8 +109,8 @@ async def main_perf(messages_num=10, wait_num=0, verbose=False):
         peerA_addr = PeerA_addr.as_str()
         sub_a = LibraAddress.from_bytes("lbr", b'A'*16, b'a'*8).as_str()
         sub_b = LibraAddress.from_bytes("lbr", b'B'*16, b'b'*8).as_str()
-        sender = PaymentActor(sub_a, StatusObject(Status.needs_kyc_data), [])
-        receiver = PaymentActor(sub_b, StatusObject(Status.none), [])
+        sender = PaymentActor(sub_a, StatusObject(Status.needs_kyc_data))
+        receiver = PaymentActor(sub_b, StatusObject(Status.none))
         action = PaymentAction(10, 'TIK', 'charge', 984736)
         payment = PaymentObject(
             sender, receiver, f'{peerA_addr}_ref{cid:08d}', None, 'Description ...', action

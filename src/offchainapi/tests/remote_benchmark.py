@@ -5,7 +5,7 @@ from ..business import VASPInfo, BusinessContext
 from ..protocol import OffChainVASP
 from ..libra_address import LibraAddress
 from ..payment_logic import PaymentCommand, PaymentProcessor
-from ..status_logic import Status
+from ..status_logic import Status, KYCResult
 from ..storage import StorableFactory
 from ..sample.sample_db import SampleDB
 from ..payment import PaymentAction, PaymentActor, PaymentObject, StatusObject
@@ -95,7 +95,7 @@ def run_server(my_configs_path, other_configs_path, num_of_commands=10, loop=Non
         my_addr,
         host='0.0.0.0',
         port=my_configs['port'],
-        business_context=AsyncMock(spec=BusinessContext),
+        business_context=TestBusinessContext(my_addr),
         info_context=SimpleVASPInfo(my_configs, other_configs),
         database=SampleDB(),
     )
@@ -182,8 +182,8 @@ def run_client(my_configs_path, other_configs_path, num_of_commands=10, port=0):
     for cid in range(num_of_commands):
         sub_a = LibraAddress.from_bytes("lbr", b'A'*16, b'a'*8).as_str()
         sub_b = LibraAddress.from_bytes("lbr", b'B'*16, b'b'*8).as_str()
-        sender = PaymentActor(sub_b, StatusObject(Status.none), [])
-        receiver = PaymentActor(sub_a, StatusObject(Status.none), [])
+        sender = PaymentActor(sub_b, StatusObject(Status.needs_kyc_data))
+        receiver = PaymentActor(sub_a, StatusObject(Status.none))
         action = PaymentAction(10, 'TIK', 'charge', 994773)
         reference = f'{my_addr.as_str()}_{cid}'
         payment = PaymentObject(

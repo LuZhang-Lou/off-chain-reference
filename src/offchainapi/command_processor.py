@@ -44,15 +44,15 @@ class CommandProcessor:
         raise NotImplementedError()  # pragma: no cover
 
     def process_command(self, other_addr,
-                        command, seq, status, error=None):
+                        command, cid, status_success, error=None):
         """Processes a command to generate more subsequent commands.
             This schedules a task that will be executed later.
 
             Args:
                 other_addr (LibraAddress): the address of the other party.
                 command (PaymentCommand): The current payment command.
-                seq (int): The sequence number of the payment command.
-                status (bool): Whether the command is a success or failure.
+                cid (str): cid of the related request.
+                status_success (bool): Whether the command is a success or failure.
                 error (Exception, optional): The exception, if the command is a
                         failure. Defaults to None.
 
